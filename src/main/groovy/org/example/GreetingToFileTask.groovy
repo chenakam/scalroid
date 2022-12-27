@@ -5,8 +5,7 @@ import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 
-abstract class GreetingTask extends DefaultTask {
-
+abstract class GreetingToFileTask extends DefaultTask {
     @OutputFile
     abstract RegularFileProperty getDestination()
 
@@ -14,6 +13,11 @@ abstract class GreetingTask extends DefaultTask {
     def greet() {
         def file = destination.get().asFile
         file.parentFile.mkdirs()
-        //file.write 'Hello!'
+        file.write 'Hello!'
+
+        println("write to file `${file.name}` succeed~")
+
+        // test throws:
+//        throw new RuntimeException()
     }
 }

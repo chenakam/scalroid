@@ -68,6 +68,11 @@ dependencies {
 1. In your `app/build.gradle` file, add dependencies as following:
 
 ```groovy
+repositories {
+    // ...
+    maven { url 'https://repo.gradle.org/gradle/libs-releases-local' }
+}
+
 dependencies {
     ////////// ////////// ////////// ////////// 便于看 android gradle 插件的源码 ////////// ////////// ////////// //////////
     // 注意：implementation 的 version 字段要与 id 'xxx' 的 version 保持一致（这在项目根目录下的`build.gradle`）。

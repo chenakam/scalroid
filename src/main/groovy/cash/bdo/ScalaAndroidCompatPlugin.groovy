@@ -16,11 +16,10 @@
 
 package cash.bdo
 
-import org.gradle.api.*
-
-//import com.android.build.gradle.BaseExtension
-//import com.android.build.gradle.BasePlugin
-
+import org.example.GreetingToFileTask
+import org.gradle.api.Plugin
+import org.gradle.api.Project
+import org.gradle.api.ProjectConfigurationException
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.component.ComponentIdentifier
@@ -29,72 +28,68 @@ import org.gradle.api.attributes.Usage
 import org.gradle.api.component.SoftwareComponentFactory
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.FileCollection
-import org.gradle.api.file.RegularFile
 import org.gradle.api.file.SourceDirectorySet
-import org.gradle.api.internal.file.DefaultFileCollectionFactory
-import org.gradle.api.internal.file.DefaultFileLookup
-import org.gradle.api.internal.file.collections.DefaultDirectoryFileTreeFactory
-import org.gradle.api.internal.provider.PropertyHost
 import org.gradle.api.internal.tasks.DefaultScalaSourceSet
-import org.gradle.api.internal.tasks.DefaultSourceSetOutput
-import org.gradle.api.internal.tasks.DefaultTaskDependencyFactory
+import org.gradle.api.logging.Logger
+import org.gradle.api.logging.Logging
 import org.gradle.api.model.ObjectFactory
-import org.gradle.api.plugins.Convention
-import org.gradle.api.plugins.ExtensionAware
 import org.gradle.api.plugins.JavaBasePlugin
-import org.gradle.api.plugins.JavaPluginExtension
 import org.gradle.api.plugins.jvm.internal.JvmPluginServices
 import org.gradle.api.plugins.scala.ScalaBasePlugin
 import org.gradle.api.plugins.scala.ScalaPlugin
 import org.gradle.api.plugins.scala.ScalaPluginExtension
 import org.gradle.api.provider.Property
-import org.gradle.api.provider.Provider
 import org.gradle.api.specs.Spec
 import org.gradle.api.tasks.ScalaSourceDirectorySet
 import org.gradle.api.tasks.TaskProvider
-import org.gradle.api.tasks.compile.AbstractCompile
-import org.gradle.api.tasks.compile.CompileOptions
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.api.tasks.scala.IncrementalCompileOptions
 import org.gradle.api.tasks.scala.ScalaCompile
 import org.gradle.api.tasks.scala.ScalaDoc
-import org.gradle.api.tasks.util.internal.PatternSets
-import org.gradle.internal.nativeintegration.services.FileSystems
-import org.gradle.jvm.toolchain.JavaToolchainService
-import org.gradle.jvm.toolchain.JavaToolchainSpec
-import org.gradle.language.base.plugins.LifecycleBasePlugin
-import org.gradle.language.scala.tasks.AbstractScalaCompile
 
 import javax.inject.Inject
-import java.util.function.BiFunction
+import java.util.concurrent.Callable
 
 import static org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE
 import static org.gradle.api.internal.lambdas.SerializableLambdas.spec
 
-interface ScalaAndroidCompatPluginExtension {
+interface ScalroidExtension {
+    static final DEF_MESSAGE = 'Hi, SCALA lover!'
+    static final DEF_GREETER = "${ScalaAndroidCompatPlugin.ID_PLUGIN.toUpperCase()} Developer~"
+
     Property<String> getMessage()
 
     Property<String> getGreeter()
 }
 
 class ScalaAndroidCompatPlugin implements Plugin<Project> {
-    static String NAME_PLUGIN = 'scalroid'
-    static String NAME_ANDROID_EXTENSION = 'android'
-    static String NAME_SCALA_EXTENSION = 'scala'
-    static String NAME_KOTLIN_EXTENSION = 'kotlin'
-    static String ID_PLUGIN = "cash.bdo.$NAME_PLUGIN"
-    static String ID_ANDROID_APP = 'com.android.application'
-    static String ID_ANDROID_LIB = 'com.android.library'
-    // 这个用法见`com.android.build.gradle.api.AndroidBasePlugin`文档。
-    static String ID_ANDROID_BASE = 'com.android.base'
-    static String ID_PRE_BUILD = 'preBuild'
+    // TODO: e.g.
+    //  `./gradlew :app:compileGithubDebugJavaWithJavac --stacktrace`
+    //  `./gradlew :app:compileGithubDebugJavaWithJavac --info` for LOGGER.info('...')
+    //  `./gradlew :app:compileGithubDebugJavaWithJavac --debug`
+    protected static final Logger LOGGER = Logging.getLogger(ScalaAndroidCompatPlugin.class)
 
+    static final NAME_PLUGIN = 'scalroid'
+    static final NAME_ANDROID_EXTENSION = 'android'
+    static final NAME_SCALA_EXTENSION = 'scala'
+    static final NAME_KOTLIN_EXTENSION = 'kotlin'
+    static final ID_PLUGIN = "cash.bdo.$NAME_PLUGIN"
+    static final ID_ANDROID_APP = 'com.android.application'
+    static final ID_ANDROID_LIB = 'com.android.library'
+    // 这个用法见`com.android.build.gradle.api.AndroidBasePlugin`文档。
+    static final ID_ANDROID_BASE = 'com.android.base'
+    static final ID_KOTLIN_ANDROID = 'org.jetbrains.kotlin.android'
+    static final ID_PRE_BUILD = 'preBuild'
+    static final ID_TEST_TO_FILE = 'testToFile'
+
+    private void testPrintParameters() {
+        // project.path: :app, project.name: app, project.group: DemoMaterial3, project.version: unspecified
+        //LOGGER.info "$NAME_PLUGIN ---> project.path: ${project.path}, project.name: ${project.name}, project.group: ${project.group}, project.version: ${project.version}"
+        //LOGGER.info ''
+    }
     private final ObjectFactory factory
     private final SoftwareComponentFactory softCptFactory
     private final JvmPluginServices jvmServices
-
-    //@VisibleForTesting
-    //private final Map<String, SourceDirectorySet> sourceDirectorySetMap = new HashMap<>()
 
     @Inject
     ScalaAndroidCompatPlugin(ObjectFactory objectFactory, SoftwareComponentFactory softCptFactory, JvmPluginServices jvmServices) {
@@ -105,48 +100,54 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
 
     @Override
     void apply(Project project) {
+        testPrintParameters()
         if (![ID_ANDROID_APP, ID_ANDROID_LIB, ID_ANDROID_BASE].any { project.plugins.findPlugin(it) }) {
             // apply plugins 具有顺序性。
-            throw new ProjectConfigurationException("Please apply `$ID_ANDROID_APP` or `$ID_ANDROID_LIB` plugin before applying `$ID_PLUGIN` plugin.", new Throwable())
+            throw new ProjectConfigurationException("Please apply `$ID_ANDROID_APP` or `$ID_ANDROID_LIB` plugin and `$ID_KOTLIN_ANDROID` before applying `$ID_PLUGIN` plugin.", new Throwable())
         }
-        ScalaAndroidCompatPluginExtension extension = project.extensions.create(NAME_PLUGIN, ScalaAndroidCompatPluginExtension)
+        if (!project.plugins.findPlugin(ID_KOTLIN_ANDROID)) {
+            throw new ProjectConfigurationException("Please apply `$ID_KOTLIN_ANDROID` plugin before applying `$ID_PLUGIN` plugin.", new Throwable())
+        }
+        ScalroidExtension extension = project.extensions.create(NAME_PLUGIN, ScalroidExtension)
 
         // 1. 应用`ScalaBasePlugin`，与标准 Android 系列插件之间没有冲突。
         project.pluginManager.apply(ScalaBasePlugin) // or apply 'org.gradle.scala-base'
         ScalaPluginExtension scalaExtension = project.extensions.getByName(NAME_SCALA_EXTENSION)
-
-        //final kotlinExtension = project.extensions.getByName(NAME_KOTLIN_EXTENSION)
-        // org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension_Decorated
-        //println "kotlinExtension: $kotlinExtension, class: ${kotlinExtension.class.name}"
-
-        // project.path: :app, project.name: app, project.group: DemoMaterial3, project.version: unspecified
-        println "project.path: ${project.path}, project.name: ${project.name}, project.group: ${project.group}, project.version: ${project.version}"
-        println()
-
         addScalaPluginExtensionToScalroidClosure(extension, scalaExtension)
 
         // 2. 设置 Scala 源代码目录，并链接编译 Task 的依赖关系。
         linkScalaAndroidResourcesAndTasks(project, extension)
         // 3. 最后，加入本插件的`Task`。
-        addPluginTask(project, extension, scalaExtension)
+        addThisPluginTask(project, extension, scalaExtension)
     }
 
-    private void addPluginTask(Project project, ScalaAndroidCompatPluginExtension extension, ScalaPluginExtension scalaExtension) {
+    private void addThisPluginTask(Project project, ScalroidExtension extension, ScalaPluginExtension scalaExtension) {
         project.task(NAME_PLUGIN) {
-            // 设置会优先返回（可以写在外面）
-            extension.message = 'Hi, scala lover!'
-            extension.greeter = 'BDO.CASH Developer~'
-            //dependsOn xxx
+            // 设置会优先返回（写在`build.gradle`里的）
+            extension.message = ScalroidExtension.DEF_MESSAGE
+            extension.greeter = ScalroidExtension.DEF_GREETER
             doLast {
-                println "${extension.message.get()} from ${extension.greeter.get()}" + "\nScala zinc version: ${extension.scala.zincVersion.get()}/${scalaExtension.zincVersion.get()}"
+                final version = scalaExtension.zincVersion.get()
+                // `extension.convention.plugins.get(NAME_SCALA_EXTENSION).zincVersion.get()`
+                assert version == extension.scala.zincVersion.get()
+                LOGGER.error "${extension.message.get()} by ${extension.greeter.get()}"
+                LOGGER.error "Scala zinc version: $version"
             }
+        }
+        project.tasks.register(ID_TEST_TO_FILE, GreetingToFileTask) {
+            destination = project.objects.fileProperty()
+            destination.set(project.layout.buildDirectory.file("${NAME_PLUGIN}/test-to-file.txt"))
+        }
+        project.tasks.getByName(ID_PRE_BUILD) {
+            dependsOn NAME_PLUGIN
+            //dependsOn ID_TEST_TO_FILE
         }
     }
 
-    private void linkScalaAndroidResourcesAndTasks(Project project, ScalaAndroidCompatPluginExtension scalroid) {
-        Object androidExtension = project.extensions.getByName(NAME_ANDROID_EXTENSION)
+    private void linkScalaAndroidResourcesAndTasks(Project project, ScalroidExtension scalroid) {
+        final androidExtension = project.extensions.getByName(NAME_ANDROID_EXTENSION)
         boolean isLibrary
-        Object androidPlugin
+        Plugin androidPlugin
         if (project.plugins.hasPlugin(ID_ANDROID_LIB)) {
             isLibrary = true
             androidPlugin = project.plugins.findPlugin(ID_ANDROID_LIB)
@@ -157,42 +158,58 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         addPluginExtensionToAndroidClosure(androidExtension, scalroid)
 
         //final scalaBasePlugin = project.plugins.findPlugin(ScalaBasePlugin)
-        final incrementalAnalysisUsage = factory.named(Usage, "incremental-analysis")
         final workDir = project.layout.buildDirectory.file(NAME_PLUGIN).get().asFile
 
         project.tasks.getByName(ID_PRE_BUILD).doLast { workDir.mkdirs() }
 
-        androidExtension.sourceSets.each { sourceSet -> // androidTest, test, main
-            // 实测在`project.afterEvaluate`前后，`sourceSet`数量不一样。
-            // 但是如果不执行这次，`build.gradle`中的`sourceSets.main.scala.xxx`会报错。
-            // 在这里执行之后，会 apply `build.gradle`中的`sourceSets.main.scala.xxx`的设置。
-            // TODO: 是否会把`sourceSets.main`中的设置 apply 到其它 variants，暂未测试，猜测应该会。
-            resolveScalaSrcDirsToAndroidSourceSetsClosure(project, sourceSet, false)
+        // 实测在`project.afterEvaluate`前后，`sourceSet`数量不一样。
+        // 但是如果不执行这次，`build.gradle`中的`sourceSets.main.scala.xxx`会报错。
+        // 在这里执行之后，会 apply `build.gradle`中的`sourceSets.main.scala.xxx`的设置。
+        //androidExtension.sourceSets.each { sourceSet -> }
+        // 新的问题是：`sourceSet.java.srcDirs += sourceSet.scala.srcDirs`在`project.afterEvaluate{}`里会报错（查了源码没写错）：
+        // Caused by: org.gradle.internal.typeconversion.UnsupportedNotationException: Cannot convert the provided notation to a File or URI: [/Users/weichou/git/bdo.cash/demo-material-3/app/src/githubDebug/scala].
+        // The following types/formats are supported:
+        //  - A String or CharSequence path, for example 'src/main/java' or '/usr/include'.  - A String or CharSequence URI, for example 'file:/usr/include'.  - A File instance.  - A Path instance.  - A Directory instance.  - A RegularFile instance.  - A URI or URL instance.  - A TextResource instance.
+        // 所以改为如下写法：
+        final sourceSetConfig = { sourceSet -> // androidTest, test, main
+            LOGGER.info "$NAME_PLUGIN ---> sourceSetConfig:${sourceSet.name}"
+            if (!resolveScalaSrcDirsToAndroidSourceSetsClosure(project, sourceSet, false)) {
+                return // 已配置（至少`main`会重复配置）
+            }
+            // 根据`DefaultScalaSourceSet`中的这一句`scalaSourceDirectorySet.getFilter().include("**/*.java", "**/*.scala")`，表明是可以在 scala 目录下写 java 文件的。
+            // 实测：虽然可以在 scala 目录写 java（并编译），但源码不能识别。但有该语句就能识别了(不用担心会串源码，有默认的过滤器)。
+            sourceSet.java.srcDirs += sourceSet.scala.srcDirs // com.google.common.collect.SingletonImmutableSet<File> 或 RegularImmutableSet
+            if (sourceSet.java.srcDirs) LOGGER.info "${sourceSet.java.srcDirs} / ${sourceSet.java.srcDirs.class}"
+            if (sourceSet.kotlin) {
+                final ktSrc = sourceSet.kotlin.srcDirs // com.google.common.collect.RegularImmutableSet<File>
+                // 同理：有了这句，kt 引用 scala 就不标红了。
+                sourceSet.kotlin.srcDirs += sourceSet.scala.srcDirs // LinkedHashSet<File>
+                // 既然…那就…
+                sourceSet.scala.srcDirs += ktSrc
+            }
+            LOGGER.info "$NAME_PLUGIN ---> java.srcDirs:" + sourceSet.java.srcDirs
+            LOGGER.info "$NAME_PLUGIN ---> scala.srcDirs:" + sourceSet.scala.srcDirs
+            LOGGER.info "$NAME_PLUGIN ---> kotlin.srcDirs:" + (sourceSet.kotlin ? sourceSet.kotlin.srcDirs : null)
+            LOGGER.info ''
+        }
+        androidExtension.sourceSets.whenObjectAdded { sourceSet -> // androidTest, main, test
+            sourceSetConfig.call(sourceSet)
         }
 
         final mainSourceSet = androidExtension.sourceSets.getByName('main')
-        println()
-        println "mainSourceSet: $mainSourceSet"
-        println()
-        println "|||||||||| |||||||||| |||||||||| |||||||||| |||||||||| AFTER EVALUATE |||||||||| |||||||||| |||||||||| |||||||||| ||||||||||"
+        LOGGER.info ''
+        LOGGER.info "$NAME_PLUGIN ---> mainSourceSet: $mainSourceSet"
+        LOGGER.info ''
+        LOGGER.info "|||||||||| |||||||||| |||||||||| |||||||||| |||||||||| AFTER EVALUATE |||||||||| |||||||||| |||||||||| |||||||||| ||||||||||"
+
+        // 要保证`main`在`project.afterEvaluate{}`配置完成。否则实测会报错。
+        sourceSetConfig.call(mainSourceSet)
 
         project.afterEvaluate {
-            println()
+            LOGGER.info ''
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
-            //project.configurations.all { Configuration config ->
-            //    println "$NAME_PLUGIN ---> configurations.name: ${config.name} -------- √√√"
-            //    config.getDependencies().each { Dependency dep -> //
-            //        println "    configurations.dependencies: ${dep.group}:${dep.name}:${dep.version}"
-            //    }
-            //    println()
-            //}
-            project.configurations.named('implementation').configure { Configuration config ->
-                println "$NAME_PLUGIN ---> configurations.name: ${config.name} -------- √"
-                config.getDependencies().each { Dependency dep -> //
-                    println "    implementation.dependencies: ${dep.group}:${dep.name}:${dep.version}"
-                }
-                println()
-            }
+            printConfiguration(project, 'implementation')
+
             //dependencies {
             //    这里的`implementation`就是`Configuration`的名字，是在`Android`插件中定义的。
             //    所以需要什么就在`dependencies`中找什么，然后按照下面的代码示例查找。
@@ -201,427 +218,378 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             //}
             // 为了让`ScalaCompile`能够找到`Scala`的版本，需要在`ScalaCompile`的`classpath`中添加包含"library"的 jar。详见：`scalaRuntime.inferScalaClasspath(compile.getClasspath())`。
             // `classpath`需要`FileCollection`，而`Configuration`继承自`FileCollection`，所以可以直接使用`Configuration`。
-            // 具体写在下边`.register("xxx", ScalaCompile)`：
-            // scalaCompile.classpath = project.configurations.create("scalaClasspathFor${sourceSet.name.capitalize()}").extendsFrom(project.configurations.implementation)
+            // 具体写在下边`x.register("xxx", ScalaCompile)`。
 
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
             final variantsAll = androidExtension.testVariants + (isLibrary ? androidExtension.libraryVariants : androidExtension.applicationVariants)
             final variantsNames = new java.util.HashSet<String>()
             variantsAll.each { variant -> variantsNames.add(variant.name) }
 
-            println()
-            println "$NAME_PLUGIN ---> variantsNames: ${variantsNames.join(", ")}"
-            println()
+            final test = 'test'
+            final androidTest = 'androidTest'
 
-            androidExtension.sourceSets.each { sourceSet -> // androidTest, test
-                println "$NAME_PLUGIN <<<===>>> sourceSet: $sourceSet"
+            LOGGER.info ''
+            LOGGER.info "$NAME_PLUGIN ---> variantsNames: ${variantsNames.join(", ")}"
+            LOGGER.info ''
 
-                resolveScalaSrcDirsToAndroidSourceSetsClosure(project, sourceSet, true)
-
-                // 把所有 scala 目录添加回 java 目录。也就是说，所有的目录都能写 java 代码。
-                // 但我觉得还是不要了，如果有需要，让其自己手动显式设置。因为如果这样的话，kotlin 也得设置。
-                def ktDirs = []
-                if (sourceSet.kotlin) ktDirs = sourceSet.kotlin.srcDirs
-
-                println "$NAME_PLUGIN --- 1 ---> java.srcDirs:" + sourceSet.java.srcDirs
-                println "$NAME_PLUGIN --- 1 ---> scala.srcDirs:" + sourceSet.scala.srcDirs
-                println "$NAME_PLUGIN --- 1 ---> kotlin.srcDirs:" + ktDirs
-                println()
+            final incrementalAnalysisUsage = factory.named(Usage, "incremental-analysis")
+            androidExtension.sourceSets.each { sourceSet -> // androidTest, test, main
+                LOGGER.info "$NAME_PLUGIN <<<===>>> sourceSet: $sourceSet"
 
                 ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
                 // 实测发现：`sourceSet.name`和`variant.name`有些不同：
                 // 例如：`sourceSet.name`是`androidTestGithubDebug`，而`variant.name`是`githubDebugAndroidTest`。但已有的`compileXxxJava/Kotlin` task 名字是以`variant.name`为准的。
                 // 所以需要统一。
-
                 def srcSetNameMatchVariant = sourceSet.name
-                final androidTest = 'androidTest'; final test = 'test'
-                println "$NAME_PLUGIN ---> contains:${variantsNames.contains(srcSetNameMatchVariant)}"
-                if (!variantsNames.contains(srcSetNameMatchVariant)) {
-                    if (srcSetNameMatchVariant.startsWith(androidTest)) {
-                        srcSetNameMatchVariant = srcSetNameMatchVariant.substring(androidTest.length()) + androidTest.capitalize()
-                    } else if (srcSetNameMatchVariant.startsWith(test)) {
-                        srcSetNameMatchVariant = srcSetNameMatchVariant.substring(test.length()) + test.capitalize()
-                    } else if (srcSetNameMatchVariant.contains(androidTest.capitalize()) || srcSetNameMatchVariant.contains(test.capitalize()) || srcSetNameMatchVariant.contains(androidTest) || srcSetNameMatchVariant.contains(test)) {
-                        // 不在开头，那就在中间或结尾，即：`androidTest`或`test`的首字母大写。
-                        println "$NAME_PLUGIN ---> exception:${srcSetNameMatchVariant}"
-                        throw new ProjectConfigurationException("sourceSet.name(${sourceSet.name}) not contains in `variants.names` and not within the expected range, please check.", new Throwable())
+                LOGGER.info "$NAME_PLUGIN ---> contains:${variantsNames.contains(srcSetNameMatchVariant)}"
+                if (srcSetNameMatchVariant != 'main') {
+                    if (!variantsNames.contains(srcSetNameMatchVariant)) {
+                        if (srcSetNameMatchVariant.startsWith(androidTest)) {
+                            srcSetNameMatchVariant = srcSetNameMatchVariant.substring(androidTest.length()).uncapitalize() + androidTest.capitalize()
+                        } else if (srcSetNameMatchVariant.startsWith(test)) {
+                            srcSetNameMatchVariant = srcSetNameMatchVariant.substring(test.length()).uncapitalize() + test.capitalize()
+                        } else if (srcSetNameMatchVariant.contains(androidTest.capitalize()) || srcSetNameMatchVariant.contains(test.capitalize()) || srcSetNameMatchVariant.contains(androidTest) || srcSetNameMatchVariant.contains(test)) {
+                            // 不在开头，那就在中间或结尾，即：`androidTest`或`test`的首字母大写。
+                            //LOGGER.info "$NAME_PLUGIN ---> exception:${srcSetNameMatchVariant}"
+                            throw new ProjectConfigurationException("sourceSet.name(${sourceSet.name}) not contains in `variants.names` and not within the expected range, please check.", new Throwable())
+                        }
+                    }
+                    LOGGER.info "$NAME_PLUGIN ---> srcSetNameMatchVariant:${srcSetNameMatchVariant}"
+                    if (!variantsNames.contains(srcSetNameMatchVariant)) {
+                        LOGGER.info "$NAME_PLUGIN ||| return"
+                        return
                     }
                 }
                 //ScalaRuntime scalaRuntime = project.extensions.getByName(SCALA_RUNTIME_EXTENSION_NAME)
-                configureScalaCompile(project, sourceSet, srcSetNameMatchVariant, incrementalAnalysisUsage)
+                configureScalaCompile(project, sourceSet, mainSourceSet, androidExtension, srcSetNameMatchVariant, incrementalAnalysisUsage)
             }
 
-            println "||||||||| |||||||||| |||||||||| link all variants depends on |||||||||| |||||||||| ||||||||||"
+            LOGGER.info "||||||||| |||||||||| |||||||||| link all variants depends on |||||||||| |||||||||| ||||||||||"
             variantsAll.each { variant ->
                 //variant = "$flavor$buildType" // e.g. "googleplayRelease", "githubDebug".
                 //"compile${variant.name.capitalize()}Scala" // `.capitalize()`首字母大写
-                println()
+                LOGGER.info ''
 
                 linkScalaCompileDependsOn(project, androidPlugin, androidExtension, workDir, variant)
 
-                println("<<<<<<<<<<<============ ${variant.name} DONE ===============>>>>>>>>>>>>>>>>>>>")
+                LOGGER.info "<<<<<<<<<<<============ ${variant.name} DONE ===============>>>>>>>>>>>>>>>>>>>"
             }
 
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
             // 这一步需要等上面`linkScalaCompileDependsOn()`触发`ScalaCompile`配置完成，才能继续。
-            configureScaladocAndIncrementalAnalysis(project, mainSourceSet)
+            // 但是没有名为`main`的 variant，也就没能正确`linkScalaCompileDependsOn()`，所以要找个 variant。
+            final possibleVariantName = variantsNames.find {
+                !(it.contains(androidTest.capitalize()) || it.contains(test.capitalize()) || it.contains(androidTest) || it.contains(test))
+            }
+            final possibleVariant = variantsAll.find { it.name == possibleVariantName }
+            configureScaladocAndIncrementalAnalysis(project, mainSourceSet, possibleVariant)
         }
     }
 
-    void configureScaladocAndIncrementalAnalysis(Project project, Object mainSourceSet) {
-        configureScaladoc(project, mainSourceSet)
-
+    void configureScaladocAndIncrementalAnalysis(Project project, mainSourceSet, possibleVariant) {
         final Configuration incrementalAnalysisElements = project.configurations.getByName("incrementalScalaAnalysisElements")
-        final scalaCompileTaskNameMain = genScalaCompileTaskName(mainSourceSet.name) // "compileMainScala" //mainSourceSet.getCompileTaskName("scala")
-        final TaskProvider<AbstractScalaCompile> compileScala = project.getTasks().withType(AbstractScalaCompile).named(scalaCompileTaskNameMain)
-        final Provider<RegularFile> compileScalaMapping = project.layout.buildDirectory.file("tmp/scala/compilerAnalysis/${scalaCompileTaskNameMain}.mapping")
-        compileScala.configure(task -> task.getAnalysisMappingFile().set(compileScalaMapping))
-        incrementalAnalysisElements.outgoing.artifact(compileScalaMapping, configurablePublishArtifact -> configurablePublishArtifact.builtBy(compileScala))
+        final mainScalaTaskName = genScalaCompileTaskName(possibleVariant.name) // mainSourceSet.name
+        final TaskProvider<ScalaCompile> compileScala = project.tasks.withType(ScalaCompile).named(mainScalaTaskName)
+        final mainScalaCompile = compileScala.get()
+        incrementalAnalysisElements.outgoing.artifact(mainScalaCompile.analysisMappingFile) {
+            builtBy(compileScala)
+        }
+        configureScaladoc(project, mainSourceSet, mainScalaCompile)
     }
-    /*
-     * 把 scalroid 加入到 android 下面。可以这样写：
-     * <pre>
-     * android {
-     *   scalroid {
-     *     <i>message = 'Hi'</i>
-     *     <i>greeter = 'Gradle'</i>
-     *   }
-     * }
-     * </pre>
-     */
 
-    private void addPluginExtensionToAndroidClosure(Object android, Object scalroid) {
-        android.metaClass."$NAME_PLUGIN" = scalroid
-        // 等同于：`android.metaClass."get${NAME_PLUGIN.capitalize()}" = scalroid`，详见`InvokerHelper.invokeMethod()`。
+    // 把 scalroid 加入到 android 下面。可以这样写：
+    // android {
+    //   scalroid {
+    //     message = 'Hi'
+    //     greeter = 'Gradle'
+    //   }
+    // }
+    private void addPluginExtensionToAndroidClosure(android, scalroid) {
+        android.convention.plugins.put(NAME_PLUGIN, scalroid) // 正规的写法
+        // 等同于（详见`InvokerHelper.invokeMethod()`）：
+        // `android.metaClass."get${NAME_PLUGIN.capitalize()}" = scalroid`
+        android.metaClass."$NAME_PLUGIN" = scalroid // 加这个的原因同下面
     }
 
     //scalroid {
     //    scala.zincVersion = '1.3.5'
     //    ...
     //}
-    private void addScalaPluginExtensionToScalroidClosure(Object scalroid, Object scala) {
+    private void addScalaPluginExtensionToScalroidClosure(scalroid, scala) {
+        scalroid.convention.plugins.put(NAME_SCALA_EXTENSION, scala) // 正规的写法
+        // 但如果不加这个，没法这样写（`build.gradle`和这里的代码都一样）：
+        // `scalroid.scala.zincVersion = xxx`
+        // 只能这样：
+        // scalroid {
+        //   scala.zincVersion.set(xxx)
+        // }
         scalroid.metaClass."$NAME_SCALA_EXTENSION" = scala
     }
 
-    private void resolveScalaSrcDirsToAndroidSourceSetsClosure(Project project, Object sourceSet, boolean evaluated) {
-        println "$NAME_PLUGIN ---> sourceSet.name:${sourceSet.name}, displayName:${sourceSet.displayName}"
-        println()
-        try {
-            println "$NAME_PLUGIN ---> sourceSet.extensions:${sourceSet.extensions}" //org.gradle.internal.extensibility.DefaultConvention
+    // [evaluated] 表示是否在`project.afterEvaluate{}`中执行。
+    private boolean resolveScalaSrcDirsToAndroidSourceSetsClosure(Project project, sourceSet, boolean evaluated) {
+        LOGGER.info "$NAME_PLUGIN ---> [resolveScalaSrcDirsToAndroidSourceSetsClosure]sourceSet.name:${sourceSet.name}, displayName:${sourceSet.displayName}"
+        LOGGER.info "$NAME_PLUGIN ---> [resolveScalaSrcDirsToAndroidSourceSetsClosure]sourceSet.extensions:${sourceSet.extensions}"
+        //org.gradle.internal.extensibility.DefaultConvention
 
-            if (sourceSet.extensions.findByName("scala")) return
+        // 对于不同的`sourceSet`，第一次肯定没有值。
+        if (sourceSet.extensions.findByName("scala")) return false
 
-            final displayName = sourceSet.displayName //(String) InvokerHelper.invokeMethod(sourceSet, "getDisplayName", null)
-            Convention sourceSetConvention = sourceSet.convention //(Convention) InvokerHelper.getProperty(sourceSet, "convention")
-            DefaultScalaSourceSet scalaSourceSet = new DefaultScalaSourceSet(displayName, factory)
-            sourceSetConvention.plugins.put("scala", scalaSourceSet)
-            sourceSet.extensions.add(ScalaSourceDirectorySet, "scala", scalaSourceSet.scala)
+        final displayName = sourceSet.displayName //(String) InvokerHelper.invokeMethod(sourceSet, "getDisplayName", null)
+        //Convention sourceSetConvention = sourceSet.convention //(Convention) InvokerHelper.getProperty(sourceSet, "convention")
+        DefaultScalaSourceSet scalaSourceSet = new DefaultScalaSourceSet(displayName, factory)
+        final SourceDirectorySet scalaDirSet = scalaSourceSet.scala
+        // 这句`约定（convention）`的作用是添加：
+        // sourceSets { main { scala.srcDirs += ['src/main/java'] } ...}
+        sourceSet.convention.plugins.put("scala", scalaSourceSet)
+        sourceSet.extensions.add(ScalaSourceDirectorySet, "scala", scalaDirSet)
+        scalaDirSet.srcDir(project.file("src/${sourceSet.name}/scala"))
 
-            final SourceDirectorySet scalaDirectorySet = scalaSourceSet.scala
-            scalaDirectorySet.srcDir(project.file("src/${sourceSet.name}/scala"))
-            //sourceSet.allJava.source(scalaDirectorySet)
-            //sourceSet.allSource.source(scalaDirectorySet)
-
-            // Explicitly capture only a FileCollection in the lambda below for compatibility with configuration-cache.
-            FileCollection scalaSource = scalaDirectorySet
-            sourceSet.resources.filter.exclude(spec(element -> scalaSource.contains(element.file)))
-        } catch (e) {
-            println "$NAME_PLUGIN ||||||| sourceSet.name:${sourceSet.name}, exception:${e}"
-            println()
-        }
+        // Explicitly capture only a FileCollection in the lambda below for compatibility with configuration-cache.
+        FileCollection scalaSource = scalaDirSet
+        sourceSet.resources.filter.exclude(spec(element -> scalaSource.contains(element.file)))
+        return true
     }
 
-    private void configureScalaCompile(Project project, Object sourceSet, String srcSetNameMatchVariant, Usage incrementalAnalysisUsage) {
-        Configuration classpath = project.configurations.getByName(sourceSet.implementationConfigurationName)
+    private void configureScalaCompile(Project project, sourceSet, mainSourceSet, androidExtension, srcSetNameMatchVariant, Usage incrementalAnalysisUsage) {
+        final ScalaSourceDirectorySet scalaDirectorySet = sourceSet.extensions.getByType(ScalaSourceDirectorySet)
+        LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]scalaDirectorySet.name:${scalaDirectorySet.name}, scalaDirectorySet.displayName:${scalaDirectorySet.displayName}"
+
+        ScalaSourceDirectorySet mainScalaDirSet
+        Configuration mainClasspath
+        if (sourceSet != mainSourceSet) {
+            mainScalaDirSet = mainSourceSet.extensions.getByType(ScalaSourceDirectorySet)
+            // 逻辑上应等同于`project.configurations.implementation`
+            mainClasspath = project.configurations.getByName(mainSourceSet.implementationConfigurationName)
+
+            LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]mainScalaDirSet.name:${mainScalaDirSet.name}, mainScalaDirSet.displayName:${mainScalaDirSet.displayName}"
+            LOGGER.info ''
+        }
+
+        Configuration classpathBySourceSet = project.configurations.getByName(sourceSet.implementationConfigurationName)
+        LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]sourceSet.implementationConfigurationName:${sourceSet.implementationConfigurationName}"
+        //printConfiguration(project, sourceSet.implementationConfigurationName)
+
         Configuration incrementalAnalysis = project.configurations.create("incrementalScalaAnalysisFor${srcSetNameMatchVariant.capitalize()}")
-        incrementalAnalysis.setVisible(false)
-        incrementalAnalysis.setDescription("Incremental compilation analysis files for ${sourceSet.displayName}")
-        incrementalAnalysis.setCanBeResolved(true)
-        incrementalAnalysis.setCanBeConsumed(false)
-        incrementalAnalysis.extendsFrom(classpath)
+        incrementalAnalysis.description = "Incremental compilation analysis files for ${sourceSet.displayName}"
+        incrementalAnalysis.visible = false
+        incrementalAnalysis.canBeResolved = true
+        incrementalAnalysis.canBeConsumed = false
+        if (mainClasspath) incrementalAnalysis.extendsFrom(classpathBySourceSet, mainClasspath) // ...
+        else incrementalAnalysis.extendsFrom(classpathBySourceSet)
         incrementalAnalysis.attributes.attribute(USAGE_ATTRIBUTE, incrementalAnalysisUsage)
 
-        final ScalaSourceDirectorySet scalaDirectorySet = sourceSet.extensions.getByType(ScalaSourceDirectorySet)
-        println "configureScalaCompile | --->>> 1 --->>> scalaDirectorySet.name:${scalaDirectorySet.name}, scalaDirectorySet.displayName:${scalaDirectorySet.displayName}"
-        println()
+        project.tasks.register(genScalaCompileTaskName(srcSetNameMatchVariant), ScalaCompile) { ScalaCompile scalaCompile ->
+            LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]compileTaskName:${scalaCompile.name}"
 
-//        final namingScheme = new ClassDirectoryBinaryNamingScheme(srcSetNameMatchVariant)
-//        `sourceSet.getClassesTaskName()`的实现（只用作参考）：
-//         String getClassesTaskName() { return getTaskName(null, "classes") }
-//        String getCompileTaskName(String language) { return getTaskName("compile", language) }
-//         String getTaskName(@Nullable String verb, @Nullable String target) { return namingScheme.getTaskName(verb, target) }
+            scalaCompile.classpath = project.configurations.create("scalaBaseClasspathFor${srcSetNameMatchVariant.capitalize()}")
+                    .extendsFrom(project.configurations.implementation, classpathBySourceSet)
+            // TODO: 实测要把`android.jar`也加入 classpath，否则如果 scala 代码间接（或直接）引用如`android.app.Activity`，会报如下错误：
+            // [Error] /Users/.../demo-material-3/app/src/main/scala/com/example/demomaterial3/Test2.scala:9:7: Class android.app.Activity not found - continuing with a stub.
+            // one error found
+            scalaCompile.classpath += androidExtension.bootClasspathConfig.mockableJarArtifact // mock `android.jar`
 
-        final compileTaskName = genScalaCompileTaskName(srcSetNameMatchVariant)
-        final TaskProvider<ScalaCompile> scalaCompileTask = project.tasks.register(compileTaskName, ScalaCompile) { ScalaCompile scalaCompile ->
-            println "configureScalaCompile | --->>> 2 configing --->>> ${compileTaskName}"
-
-            scalaCompile.classpath = project.configurations.create("scalaBaseClasspathFor${srcSetNameMatchVariant.capitalize()}").extendsFrom(project.configurations.implementation)
-            // + factory.fileCollection().from(androidExtension.bootClasspathConfig.fullBootClasspath)
-            // 等同于 project.files(androidExtension.bootClasspathConfig.fullBootClasspath)
+            ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
+            scalaCompile.source = scalaDirectorySet
+            // TODO: 不编译的终极原因（`./gradlew :app:compileGithubDebugScala --info`）：
+            //  Skipping task ':app:compileGithubDebugScala' as it has no source files and no previous output files.
+            if (mainScalaDirSet) scalaCompile.source += mainScalaDirSet
+            ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
 
             scalaCompile.description = "Compiles the ${scalaDirectorySet}."
-            scalaCompile.source = scalaDirectorySet
-            scalaCompile.javaLauncher.convention(getToolchainTool(project, JavaToolchainService::launcherFor))
-            scalaCompile.analysisMappingFile.set(project.layout.buildDirectory.file("tmp/scala/compilerAnalysis/${scalaCompile.name}.mapping"))
+            //scalaCompile.javaLauncher.convention(getToolchainTool(project, JavaToolchainService::launcherFor))
+            scalaCompile.analysisMappingFile.set(project.layout.buildDirectory.file("scala/compilerAnalysis/${scalaCompile.name}.mapping"))
 
-            // cannot compute at task execution time because we need association with source set
+            // Cannot compute at task execution time because we need association with source set
             IncrementalCompileOptions incrementalOptions = scalaCompile.scalaCompileOptions.incrementalOptions
-            incrementalOptions.analysisFile.set(project.layout.buildDirectory.file("tmp/scala/compilerAnalysis/${scalaCompile.name}.analysis"))
-            incrementalOptions.classfileBackupDir.set(project.layout.buildDirectory.file("tmp/scala/classfileBackup/${scalaCompile.name}.bak"))
+            incrementalOptions.analysisFile.set(project.layout.buildDirectory.file("scala/compilerAnalysis/${scalaCompile.name}.analysis"))
+            incrementalOptions.classfileBackupDir.set(project.layout.buildDirectory.file("scala/classfileBackup/${scalaCompile.name}.bak"))
 
-            scalaCompile.analysisFiles.from(incrementalAnalysis.incoming.artifactView({ viewConfig ->
-                viewConfig.lenient(true)
-                viewConfig.componentFilter(new IsProjectComponent())
+            scalaCompile.analysisFiles.from(incrementalAnalysis.incoming.artifactView({
+                lenient(true)
+                componentFilter(new Spec<ComponentIdentifier>() {
+                    @Override
+                    boolean isSatisfiedBy(ComponentIdentifier element) {
+                        return element instanceof ProjectComponentIdentifier
+                    }
+                })
             }).files)
             scalaCompile.dependsOn(scalaCompile.analysisFiles)
+
+            // 目录与 kotlin 保持一致（原本下面要用到，但没用，已删）。
+            //scalaDirectorySet.destinationDirectory.convention(project.layout.buildDirectory.dir("tmp/scala-classes/${srcSetNameMatchVariant}"))
+            scalaCompile.destinationDirectory.convention(/*scalaDirectorySet.destinationDirectory*/ project.layout.buildDirectory.dir("tmp/scala-classes/${srcSetNameMatchVariant}"))
         }
-
-//        if (sourceSet.name != 'main') return
-
-//        // TODO: 把该方法等效复制过来
-//        JvmPluginsHelper.configureOutputDirectoryForSourceSet(sourceSet, scalaDirectorySet, project, scalaCompileTask, scalaCompileTask.map(new Transformer<CompileOptions, ScalaCompile>() {
-//            @Override
-//            public CompileOptions transform(ScalaCompile scalaCompile) {
-//                return scalaCompile.getOptions()
-//            }
-//        }))
-
-        final options = scalaCompileTask.map(new Transformer<CompileOptions, ScalaCompile>() {
-            @Override
-            public CompileOptions transform(ScalaCompile scalaCompile) {
-                return scalaCompile.getOptions()
-            }
-        })
-        // 目录与 kotlin 保持一致
-        scalaDirectorySet.destinationDirectory.convention(project.layout.buildDirectory.dir("tmp/scala-classes/${scalaDirectorySet.name}/${srcSetNameMatchVariant}"))
-
-        // TODO: 没有输出目录
-        sourceSet.metaClass.properties.each { groovy.lang.MetaBeanProperty it ->
-            try {
-                println "configureScalaCompile | --->>> 3 --->>> key:${it.getName()}, value:${it.getProperty(sourceSet)}"
-            } catch (e) {
-                println "configureScalaCompile | --->>> 3 --->>> key:${it.getName()}, exception:${e}"
-            }
-        }
-//        com.android.build.gradle.internal.api.DefaultAndroidSourceSet
-//        com.android.build.gradle.api.AndroidSourceDirectorySet
-//        com.android.build.api.dsl.AndroidSourceDirectorySet
-//        com.android.build.gradle.AppPlugin
-
-        final sourceSetDisplayName = sourceSet.displayName
-        final fileLookup = new DefaultFileLookup()
-        final fileCollectionFactory = new DefaultFileCollectionFactory(fileLookup.pathToFileResolver, DefaultTaskDependencyFactory.withNoAssociatedProject(), new DefaultDirectoryFileTreeFactory(), PatternSets.getNonCachingPatternSetFactory(), PropertyHost.NO_OP, FileSystems.getDefault());
-        // TODO: 最后一块骨头了
-        // DefaultSourceSetOutput sourceSetOutput = Cast.cast(DefaultSourceSetOutput.class, sourceSet.getOutput())
-        DefaultSourceSetOutput sourceSetOutput = new DefaultSourceSetOutput(sourceSetDisplayName, fileLookup.fileResolver, fileCollectionFactory)
-        sourceSetOutput.addClassesDir(scalaDirectorySet.destinationDirectory)
-        sourceSetOutput.registerClassesContributor(scalaCompileTask)
-        sourceSetOutput.generatedSourcesDirs.from(options.flatMap(CompileOptions::getGeneratedSourceOutputDirectory))
-        scalaDirectorySet.compiledBy(scalaCompileTask, AbstractCompile::getDestinationDirectory)
-
-        final classesTaskName = genScalaClassesTaskName(srcSetNameMatchVariant) // sourceSet.getClassesTaskName()
-        project.tasks.register(classesTaskName, classesTask -> {
-            classesTask.setGroup(LifecycleBasePlugin.BUILD_GROUP)
-            classesTask.setDescription("Assembles ${sourceSetOutput}.")
-            classesTask.dependsOn(sourceSetOutput.dirs)
-//            classesTask.dependsOn(sourceSet.getCompileJavaTaskName())
-//            classesTask.dependsOn(sourceSet.getProcessResourcesTaskName())
-        })
-        project.tasks.named(classesTaskName) { Task task -> task.dependsOn scalaCompileTask }
-//        project.tasks.each { // 以下输出猜的没错
-//            if (it.name.contains('class') || it.name.contains('Class')) {
-//                // `bundle{Variant}[XxxTest]ClassesToCompileJar`
-//                println "configureScalaCompile | --->>> 4 --->>> task.name:${it.name}, task.type:${it.class.name}"
-//            }
-//        }
     }
 
-    private void linkScalaCompileDependsOn(Project project, Object androidPlugin, Object androidExtension, File workDir, Object variant) {
-        println "$NAME_PLUGIN ---> androidPlugin: ${androidPlugin}" // com.android.build.gradle.AppPlugin@8ab260a
-        println "$NAME_PLUGIN ---> workDir: ${workDir.path}" // /Users/{PATH-TO-}/demo-material-3/app/build/scalroid
-        println "$NAME_PLUGIN ---> variant: ${variant.name}" // githubDebug
+    private void linkScalaCompileDependsOn(Project project, Plugin androidPlugin, final androidExtension, final workDir, final variant) {
+        //LOGGER.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]androidPlugin:${androidPlugin}" // com.android.build.gradle.AppPlugin@8ab260a
+        //LOGGER.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]workDir:${workDir.path}" // /Users/{PATH-TO-}/demo-material-3/app/build/scalroid
+        LOGGER.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]variant:${variant.name}" // githubDebug
 
-        //final javaCompileProvider = project.tasks.withType(JavaCompile).named("compile${variant.name.capitalize()}JavaWithJavac")
-        //if (javaCompileProvider.orNull != null) { final javaCompile = javaCompileProvider.get() }
-        final JavaCompile javaCompile = project.tasks.findByName("compile${variant.name.capitalize()}JavaWithJavac")
-        if (javaCompile != null) {
+        final javaTaskName = genJavaCompileTaskName(variant.name)
+        final scalaTaskName = genScalaCompileTaskName(variant.name)
+        final kotlinTaskName = genKotlinCompileTaskName(variant.name)
+
+        final JavaCompile javaCompile = project.tasks.findByName(javaTaskName)
+        if (javaCompile) {
             // 获取前面已经注册的`scalaCompileTask`。见`project.tasks.register()`文档。
-            project.tasks.withType(ScalaCompile).getByName("compile${variant.name.capitalize()}Scala") { ScalaCompile scalaCompile ->
-                println "$NAME_PLUGIN ---> scalaCompile: ${scalaCompile}"
+            project.tasks.withType(ScalaCompile).getByName(scalaTaskName) { ScalaCompile scalaCompile ->
+                LOGGER.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]javaCompile.destinationDirectory:${javaCompile.destinationDirectory.orNull}"
 
-                //println "$NAME_PLUGIN ---> javaCompile.classpath: ${javaCompile.classpath.asList().join(",\n")}"
-                // 不能`scalaCompile.classpath = javaCompile.classpath`，这里似乎晚了（先走的是`project.tasks.register()`的那个 Closure，然后`project.tasks.withType(ScalaCompile).configureEach(compile -> {})`，见`ScalaBasePlugin`），更多解释见上面。
+                javaCompile.dependsOn scalaCompile
 
-                println "$NAME_PLUGIN ---> javaCompile.destinationDirectory: ${javaCompile.getDestinationDirectory().orNull}"
+                // 目录与 kotlin 保持一致（前面已经设置默认值了）
+                //scalaCompile.destinationDirectory.set(project.layout.buildDirectory.dir("tmp/scala-classes/${variant.name}"))
+                scalaCompile.sourceCompatibility = javaCompile.sourceCompatibility
+                scalaCompile.targetCompatibility = javaCompile.targetCompatibility
+                // Unexpected javac output: 警告: [options] 未与 -source 8 一起设置引导类路径
+                scalaCompile.options.bootstrapClasspath = javaCompile.options.bootstrapClasspath
+                scalaCompile.options.encoding = javaCompile.options.encoding
+                //scalaCompile.scalaCompileOptions.encoding = scalaCompile.options.encoding
 
-//                scalaCompile.destinationDirectory.set(javaCompile.destinationDirectory)
-//                scalaCompile.sourceCompatibility = javaCompile.sourceCompatibility
-//                scalaCompile.targetCompatibility = javaCompile.targetCompatibility
-//                scalaCompile.scalaCompileOptions.encoding = javaCompile.options.encoding
-//                scalaCompile.options.encoding = javaCompile.options.encoding
+                final kotlinCompile = project.tasks.findByName(kotlinTaskName)
+                if (kotlinCompile) {
+                    //LOGGER.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]kotlinCompile:${kotlinCompile} / ${kotlinCompile.class}" // org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
-//                javaCompile.dependsOn scalaCompile
-
-                final scalaClasses = project.tasks.findByName(genScalaClassesTaskName(variant.name))
-                if (scalaClasses != null) {
-                    javaCompile.dependsOn scalaClasses
-                }
-
-                final kotlinCompile = project.tasks.findByName("compile${variant.name.capitalize()}Kotlin")
-                if (kotlinCompile != null) {
-                    println "$NAME_PLUGIN ---> kotlinCompile: ${kotlinCompile}, class: ${kotlinCompile.class.name}" // org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-//                    kotlinCompile.dependsOn scalaCompile
-                    if (scalaClasses != null) {
-                        kotlinCompile.dependsOn scalaClasses
-                    }
+                    wireScalaTasks(project, variant, project.tasks.named(scalaTaskName), project.tasks.named(javaTaskName), project.tasks.named(kotlinTaskName))
                 } else {
-                    println "$NAME_PLUGIN ---> kotlinCompile: null"
+                    LOGGER.warn "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]kotlinCompile:null"
                 }
             }
         } else {
-            println "$NAME_PLUGIN ---> javaCompile: null"
+            LOGGER.warn "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]javaCompile:null"
         }
-
-        return
-
-//        ScalaRuntime scalaRuntime = project.extensions.getByName(SCALA_RUNTIME_EXTENSION_NAME)
-//        //String scalaVersion = scalaRuntime.getScalaVersion()
-//
-//        final javaCompileTp = {}
-//
-//
-//        // To prevent locking classes.jar by JDK6's URLClassLoader
-//        def libraryClasspath = javaCompileTp.classpath.grep { it.name != "classes.jar" }
-//        def scalaVersion = scalaVersionFromClasspath(libraryClasspath)
-//        if (!scalaVersion) {
-//            return
-//        }
-//        project.logger.info("scala-library version=${scalaVersion} detected")
-//        def zincConfigurationName = "androidScalaPluginZincFor" + javaCompileTp.name
-//        def zincConfiguration = project.configurations.findByName(zincConfigurationName)
-//        if (!zincConfiguration) {
-//            zincConfiguration = project.configurations.create(zincConfigurationName)
-//            project.dependencies.add(zincConfigurationName, "com.typesafe.zinc:zinc:0.3.7")
-//        }
-//        def compilerConfigurationName = "androidScalaPluginScalaCompilerFor" + javaCompileTp.name
-//        def compilerConfiguration = project.configurations.findByName(compilerConfigurationName)
-//        if (!compilerConfiguration) {
-//            compilerConfiguration = project.configurations.create(compilerConfigurationName)
-//            project.dependencies.add(compilerConfigurationName, "org.scala-lang:scala-compiler:$scalaVersion")
-//        }
-//        def variantWorkDir = getVariantWorkDir(workDir, variant)
-//        def scalaCompileTask = project.tasks.create("compile${variant.name.capitalize()}Scala", ScalaCompile)
-//        def scalaSources = variant.variantData.variantConfiguration.sortedSourceProviders.inject([]) { acc, val -> acc + val.java.sourceFiles }
-//        scalaCompileTask.source = scalaSources
-//        scalaCompileTask.destinationDir = javaCompileTp.destinationDir
-//        scalaCompileTask.sourceCompatibility = javaCompileTp.sourceCompatibility
-//        scalaCompileTask.targetCompatibility = javaCompileTp.targetCompatibility
-//        scalaCompileTask.scalaCompileOptions.encoding = javaCompileTp.options.encoding
-//        scalaCompileTask.classpath = javaCompileTp.classpath + project.files(androidPlugin.androidBuilder.getBootClasspath(false))
-//        scalaCompileTask.scalaClasspath = compilerConfiguration.asFileTree
-//        scalaCompileTask.zincClasspath = zincConfiguration.asFileTree
-//        scalaCompileTask.scalaCompileOptions.incrementalOptions.analysisFile = new File(variantWorkDir, "analysis.txt")
-//
-//        if (extension.addparams) {
-//            scalaCompileTask.scalaCompileOptions.additionalParameters = [extension.addparams]
-//        }
-//
-//        def dummyDestinationDir = new File(variantWorkDir, "javaCompileDummyDestination")
-//        // TODO: More elegant way
-//        def dummySourceDir = new File(variantWorkDir, "javaCompileDummySource")
-//        // TODO: More elegant way
-//        def javaCompileOriginalDestinationDir = new AtomicReference<File>()
-//        def javaCompileOriginalSource = new AtomicReference<FileCollection>()
-//        def javaCompileOriginalOptionsCompilerArgs = new AtomicReference<List<String>>()
-//        javaCompileTp.doFirst {
-//            // Disable compilation
-//            javaCompileOriginalDestinationDir.set(javaCompileTp.destinationDir)
-//            javaCompileOriginalSource.set(javaCompileTp.source)
-//            javaCompileTp.destinationDir = dummyDestinationDir
-//            if (!dummyDestinationDir.exists()) {
-//                FileUtils.forceMkdir(dummyDestinationDir)
-//            }
-//            def dummySourceFile = new File(dummySourceDir, "Dummy.java")
-//            if (!dummySourceFile.exists()) {
-//                FileUtils.forceMkdir(dummySourceDir)
-//                dummySourceFile.withWriter { it.write("class Dummy{}") }
-//            }
-//            javaCompileTp.source = [dummySourceFile]
-//            def compilerArgs = javaCompileTp.options.compilerArgs
-//            javaCompileOriginalOptionsCompilerArgs.set(compilerArgs)
-//            javaCompileTp.options.compilerArgs = compilerArgs + "-proc:none"
-//        }
-//        javaCompileTp.outputs.upToDateWhen {
-//            false
-//        }
-//        javaCompileTp.doLast {
-//            FileUtils.deleteDirectory(dummyDestinationDir)
-//            javaCompileTp.destinationDir = javaCompileOriginalDestinationDir.get()
-//            javaCompileTp.source = javaCompileOriginalSource.get()
-//            javaCompileTp.options.compilerArgs = javaCompileOriginalOptionsCompilerArgs.get()
-//
-//            // R.java is appended lazily
-//            scalaCompileTask.source = [] + new TreeSet(scalaCompileTask.source.collect { it } + javaCompileTp.source.collect { it })
-//            // unique
-//            def noisyProperties = ["compiler", "includeJavaRuntime", "incremental", "optimize", "useAnt"]
-//            InvokerHelper.setProperties(scalaCompileTask.options,
-//                    javaCompileTp.options.properties.findAll { !noisyProperties.contains(it.key) })
-//            noisyProperties.each { property ->
-//                // Suppress message from deprecated/experimental property as possible
-//                if (!javaCompileTp.options.hasProperty(property) || !scalaCompileTask.options.hasProperty(property)) {
-//                    return
-//                }
-//                if (scalaCompileTask.options[property] != javaCompileTp.options[property]) {
-//                    scalaCompileTask.options[property] = javaCompileTp.options[property]
-//                }
-//            }
-//            scalaCompileTask.execute()
-//            project.logger.lifecycle(scalaCompileTask.path)
-//        }
     }
 
-    String genScalaCompileTaskName(String srcSetNameMatchVariant) {
+    private void wireScalaTasks(Project project, variant, TaskProvider scalaTask, TaskProvider javaTask, TaskProvider kotlinTask) {
+        // 参见`org.jetbrains.kotlin.gradle.plugin.KotlinAndroidPlugin`开头的`(project.kotlinExtension as KotlinAndroidProjectExtension).target = it`
+        // 根据源码分析，这里已不需要进行`.castIsolatedKotlinPluginClassLoaderAware()`，也没法直接调用（其目的
+        // 是过早地发现错误并给出详细的建议，见`IsolatedKotlinClasspathClassCastException`）。
+        final kotlinExtension = project.extensions.getByName(NAME_KOTLIN_EXTENSION) // KotlinAndroidProjectExtension_Decorated
+        final target = kotlinExtension.target // KotlinAndroidTarget
+        final compilation = target.compilations.getByName(variant.name) // KotlinJvmAndroidCompilation
+
+        final outputs = compilation.output.classesDirs // ConfigurableFileCollection
+        //LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]outputs:${outputs.class}, it.files:${outputs.files}"
+        outputs.from(scalaTask.flatMap { it.destinationDirectory })
+        //final outputs1 = compilation.output.classesDirs
+        //LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]outputs1:${outputs1.class}, it.files:${outputs1.files}"
+
+        // 写法参见`org.jetbrains.kotlin.gradle.plugin.Android25ProjectHandler`的`wireKotlinTasks()`。
+        // 如果这样写`project.files(scalaTask.get().destinationDirectory)`会导致 Task 的循环依赖。
+        final javaOuts = project.files(project.provider([call: { javaTask.get().destinationDirectory.get().asFile }] as Callable))
+        final scalaOuts = project.files(project.provider([call: { scalaTask.get().destinationDirectory.get().asFile }] as Callable))
+        final kotlinOuts = project.files(project.provider([call: { kotlinTask.get().destinationDirectory.get().asFile }] as Callable))
+        LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]javaOuts:${javaOuts}, it.files:${javaOuts.files}"
+        LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]scalaOuts:${scalaOuts}, it.files:${scalaOuts.files}"
+        LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]kotlinOuts:${kotlinOuts}, it.files:${kotlinOuts.files}"
+
+        // 这句的作用是便于分析出任务依赖关系（In order to properly wire up tasks），详见`Object registerPreJavacGeneratedBytecode(FileCollection)`文档。
+        // 这句可以不要以欺骗依赖图生成循环依赖。
+        scalaOuts.builtBy(scalaTask)
+//        variant.registerJavaGeneratingTask(scalaTask, scalaTask.get().source.files)
+//        variant.registerJavaGeneratingTask(kotlinTask, kotlinTask.get().sources.files)
+
+        //final outsNew = javaOuts + kotlinOuts //.from(kotlinOuts)
+        //final classpathKey = variant.registerPreJavacGeneratedBytecode(outsNew)
+        //LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]classpathKey:${classpathKey} / ${classpathKey.class}" // java.lang.Object@2faa3212 / class java.lang.Object
+
+        // 根据根据源码分析，下面`classpathKey`可以不传（即：null）。
+        // 但不传的话，拿到的`compileClasspath`不一样，具体表现在：`传/不传`的循环依赖不同。
+        // 根据源码分析，拿到的返回值包含`variant.getGeneratedBytecode(classpathKey)`的返回值，该值包含
+        // 参数`classpathKey`在注册（`variant.registerPreJavacGeneratedBytecode(fileCol)`）之前传入（即`fileCol`）的所有值。
+        // 简单来说，每次调用下面的方法，返回值都包含[除本次注册外]之前注册时入参的所有`FileCollection`。
+        // 而如果没有参数，则包含所有已注册的值。
+        final compileClasspath = variant.getCompileClasspath(/*classpathKey*/)
+        // org.gradle.api.internal.file.collections.DefaultConfigurableFileCollection
+        //LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]variant.getCompileClasspath(classpathKey):${compileClasspath} / ${compileClasspath.class}"
+        // TODO:
+        //  java.lang.RuntimeException: Configuration 'githubDebugCompileClasspath' was resolved during configuration time.
+        //  This is a build performance and scalability issue.
+        //  scalroid ---> [wireScalaTasks]variant.getCompileClasspath(classpathKey):[/Users/weichou/git/bdo.cash/demo-material-3/app/build/intermediates/compile_and_runtime_not_namespaced_r_class_jar/
+        //    githubDebug/R.jar, /Users/weichou/.gradle/caches/transforms-3/893b9b5a0019ab2d13f957bcf2fabcb9/transformed/viewbinding-7.3.1-api.jar, /Users/weichou/.gradle/caches/transforms-3/3b9fa4710e9e16ecd783cc23f2a62967/transformed/navigation-ui-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/b4c5cd6f5d69a09c90e3ea53830c48f5/transformed/navigation-ui-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/7c5ae5c220196941122f9db4d7a639bc/transformed/material-1.7.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/a2622ad63284a4fbebfb584b9b851884/transformed/appcompat-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/6c3948d45ddaf709ba26745189eab999/transformed/viewpager2-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/2a8d540a7e825c31c133e1550351db89/transformed/navigation-fragment-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/d9907136fb1ec2be0470c0c515d25b44/transformed/navigation-fragment-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/6eaf265bb3918c4fd1dce0869a434f72/transformed/fragment-ktx-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/3ff5ce784625b6b2d8a5c8ed94aa647c/transformed/fragment-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/27c0c7f932da50fcd00c251ed8922e6d/transformed/navigation-runtime-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/b010a8c66f1d64f1d21c27bb1beb821c/transformed/navigation-runtime-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/f151321734e20d7116485bb3ab462df6/transformed/activity-ktx-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/21307ac95e78f6bab6ef32fc6c8c8597/transformed/activity-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/b7a04d7ac46f005b9d948413fa63b076/transformed/navigation-common-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/7a98affa0f1b253f31ac3690fb7b577b/transformed/navigation-common-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/49780de7b782ff560647221ad2cc9d58/transformed/lifecycle-viewmodel-savedstate-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/ec53663f906b415395ef3a78e7add5aa/transformed/lifecycle-viewmodel-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/498d61dce25ec5c15c1a4140b70f1b13/transformed/lifecycle-runtime-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm/1.6.1/97fd74ccf54a863d221956ffcd21835e168e2aaa/kotlinx-coroutines-core-jvm-1.6.1.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlinx/kotlinx-coroutines-android/1.6.1/4e61fcdcc508cbaa37c4a284a50205d7c7767e37/kotlinx-coroutines-android-1.6.1.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk8/1.7.20/eac6656981d9d7156e838467d2d8d79093b1570/kotlin-stdlib-jdk8-1.7.20.jar, /Users/weichou/.gradle/caches/transforms-3/394f4ba5a7303202a56e467034c8c851/transformed/core-ktx-1.9.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/6e9fde4cc1497ecd85ffdf980a60e5ab/transformed/appcompat-resources-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/aa25fefefb4284675752d1b8716a8bf4/transformed/drawerlayout-1.1.1-api.jar, /Users/weichou/.gradle/caches/transforms-3/6f5d72cc112503558a75fc45f0fbfe22/transformed/coordinatorlayout-1.1.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/f66c58055f09c54df80d3ac39cfc8ed7/transformed/dynamicanimation-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/76fb2fc3976e6e2590393baaa768ea01/transformed/recyclerview-1.1.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/d5505f9d57d8c6a72c4bfbea8e0d1d59/transformed/transition-1.4.1-api.jar, /Users/weichou/.gradle/caches/transforms-3/cb376832b44347e0e2863a0efbfb46c1/transformed/vectordrawable-animated-1.1.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/51c160350e1db060225cf076555bddc5/transformed/vectordrawable-1.1.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/b437c042a4fb25b5473beb3aa3810946/transformed/viewpager-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/c711a0ee0692c4fae81cdd671dadbde0/transformed/slidingpanelayout-1.2.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/60367c0dc3b93ae22d44974ed438a5f5/transformed/customview-1.1.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/05f2d7edda9b38183e0acbcdee061d41/transformed/legacy-support-core-utils-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/5bb317b860d652a7e95da35400298e99/transformed/loader-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/0c3f5120a16030c3b02e209277f606e0/transformed/core-1.9.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/c9dedd1f96993d0760d55df081a29879/transformed/cursoradapter-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/8bb096c8444b515fe520f2a8e48caab1/transformed/savedstate-ktx-1.2.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/cdb42f31a8e9bad7a8ea34dbb5e7b7f6/transformed/savedstate-1.2.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/9c4ff74ae88f4d922542d59f88faa6bc/transformed/cardview-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/ee8da9fe5cd86ed12e7a623b8098a166/transformed/lifecycle-runtime-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/b81c0a66f40e81ce8db2df92a1963d5b/transformed/versionedparcelable-1.1.1-api.jar, /Users/weichou/.gradle/caches/transforms-3/83b5d525a0ebd9bc00322953f05c96f4/transformed/lifecycle-viewmodel-2.5.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/androidx.collection/collection-ktx/1.1.0/f807b2f366f7b75142a67d2f3c10031065b5168/collection-ktx-1.1.0.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/androidx.collection/collection/1.1.0/1f27220b47669781457de0d600849a5de0e89909/collection-1.1.0.jar, /Users/weichou/.gradle/caches/transforms-3/f306f739dc2177bf68711c65fe4e11e2/transformed/lifecycle-livedata-2.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/dfab4e028be7115b8ccc3796fb2e0428/transformed/core-runtime-2.1.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/androidx.arch.core/core-common/2.1.0/b3152fc64428c9354344bd89848ecddc09b6f07e/core-common-2.1.0.jar, /Users/weichou/.gradle/caches/transforms-3/82360dce7c90d10221f06f4ddfa5bc67/transformed/lifecycle-livedata-core-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/8d444fd9988175cecd13055f04813b91/transformed/lifecycle-livedata-core-2.5.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/androidx.lifecycle/lifecycle-common/2.5.0/1fdb7349701e9cf2f0a69fc10642b6fef6bb3e12/lifecycle-common-2.5.0.jar, /Users/weichou/.gradle/caches/transforms-3/afa292a87f73b3eaac7c83ceefd92574/transformed/interpolator-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/a7341bbf557f0eee7488093003db0f01/transformed/documentfile-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/46ecd33fc8b0aff76d637a8fc3226518/transformed/localbroadcastmanager-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/2e9cbd427ac36e8b9e40572d70105d5c/transformed/print-1.0.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/androidx.annotation/annotation/1.3.0/21f49f5f9b85fc49de712539f79123119740595/annotation-1.3.0.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk7/1.7.20/2a729aa8763306368e665e2b747abd1dfd29b9d5/kotlin-stdlib-jdk7-1.7.20.jar, /Users/weichou/.gradle/caches/transforms-3/f45fdb3a6f32f3117a02913a5475531b/transformed/annotation-experimental-1.3.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/1.7.20/726594ea9ba2beb2ee113647fefa9a10f9fabe52/kotlin-stdlib-1.7.20.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-common/1.7.20/e15351bdaf9fa06f009be5da7a202e4184f00ae3/kotlin-stdlib-common-1.7.20.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations/13.0/919f0dfe192fb4e063e7dacadee7f8bb9a2672a9/annotations-13.0.jar, /Users/weichou/.gradle/caches/transforms-3/b61a19ce0ffb6b0eab4a6ede97932e2f/transformed/constraintlayout-2.1.4-api.jar, /Users/weichou/.gradle/caches/transforms-3/632e82547c61849d331ad6e31a1fb88c/transformed/annoid-af2b53cfce-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/com.github.dedge-space/scala-lang/253dc64cf9/51c97f073e45e5183af054e4596869d035f47b2d/scala-lang-253dc64cf9.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.scala-lang/scala-compiler/2.11.12/a1b5e58fd80cb1edc1413e904a346bfdb3a88333/scala-compiler-2.11.12.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.scala-lang/scala-reflect/2.11.12/2bb23c13c527566d9828107ca4108be2a2c06f01/scala-reflect-2.11.12.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.scala-lang.modules/scala-xml_2.11/1.0.5/77ac9be4033768cf03cc04fbd1fc5e5711de2459/scala-xml_2.11-1.0.5.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.scala-lang.modules/scala-parser-combinators_2.11/1.0.4/7369d653bcfa95d321994660477a4d7e81d7f490/scala-parser-combinators_2.11-1.0.4.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.scala-lang/scala-library/2.12.17/4a4dee1ebb59ed1dbce014223c7c42612e4cddde/scala-library-2.12.17.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/com.github.dedge-space/annoguard/v1.0.5-beta/d9f31382b1d2d4bbf8e34de4b7ef6a547277cfdb/annoguard-v1.0.5-beta.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/com.google.code.gson/gson/2.8.0/c4ba5371a29ac9b2ad6129b1d39ea38750043eff/gson-2.8.0.jar, /Users/weichou/git/bdo.cash/demo-material-3/app/build/tmp/kotlin-classes/githubDebug]
+        //LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]variant.getCompileClasspath(classpathKey):${compileClasspath.files}"
+        scalaTask.configure { scala -> // ...
+            scala.classpath += compileClasspath
+//            scala.classpath += kotlinOuts
+        }
+        // 该方法没有接口，无法调用。
+        //final prevRegistered = variant.getGeneratedBytecode()
+        // 根据源码分析，只有没注册过的，才需进行注册（不过这里已经是构建的最后了，没有后续编译任务依赖这个 compileClasspath，用不上了）。
+        final clzPathKey = variant.registerPreJavacGeneratedBytecode(scalaOuts)
+        kotlinTask.configure { kt -> // `kt.classpath`用`kt.libraries`替代了。
+            //final files = kt.libraries as ConfigurableFileCollection
+            //files.from(variant.getGeneratedBytecode() - prevRegistered) //variant.getCompileClasspath(clzPathKey) - files)
+            kt.libraries.from(scalaOuts) // 根据上文和源码，直接这样用即可。
+
+            if (!kt.incremental) {
+                LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]variant:${variant.name}, kt.incremental:${kt.incremental}, change to true."
+                //kt.incremental = true // 用不到下面的，该值也就不用设置了。
+            }
+            // 报错：property 'classpathSnapshotProperties.useClasspathSnapshot' cannot be changed any further.
+            // 根据源码，发现`kt.classpathSnapshotProperties`的任何值都是不能改变的：`task.classpathSnapshotProperties.classpathSnapshot.from(xxx).disallowChanges()`。
+            // TODO: 要改变它的值，需要在 gradle.properties 中增加一行：
+            //  `kotlin.incremental.useClasspathSnapshot=true`
+            //  实测通过，写在 local.properties 也可以。
+            //  不过，实测不适用于 scala-kotlin 交叉编译。https://blog.jetbrains.com/zh-hans/kotlin/2022/07/a-new-approach-to-incremental-compilation-in-kotlin/
+            //kt.classpathSnapshotProperties.classpathSnapshot.from(scalaOuts)
+            if (!kt.classpathSnapshotProperties.useClasspathSnapshot.get()) {
+                LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]variant:${variant.name}, useClasspathSnapshot:${kt.classpathSnapshotProperties.useClasspathSnapshot.get()}, change to true is disallow."
+                //kt.classpathSnapshotProperties.useClasspathSnapshot.set(true)
+            }
+        }
+    }
+
+    ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
+    private void configureScaladoc(Project project, mainSourceSet, ScalaCompile mainScalaCompile) {
+        project.tasks.withType(ScalaDoc).configureEach { ScalaDoc scalaDoc ->
+            scalaDoc.conventionMapping.map("classpath", (new Callable<FileCollection>() {
+                @Override
+                FileCollection call() {
+                    LOGGER.info "$NAME_PLUGIN ---> [configureScaladoc] >>>"
+                    return project.files().from(mainScalaCompile.outputs, mainScalaCompile.classpath)
+                }
+            }))
+            scalaDoc.setSource(mainSourceSet.extensions.getByType(ScalaSourceDirectorySet))
+            scalaDoc.compilationOutputs.from(mainScalaCompile.outputs)
+        }
+        project.tasks.register(ScalaPlugin.SCALA_DOC_TASK_NAME, ScalaDoc) { ScalaDoc scalaDoc ->
+            scalaDoc.setDescription("Generates Scaladoc for the main source code.")
+            scalaDoc.setGroup(JavaBasePlugin.DOCUMENTATION_GROUP)
+        }
+    }
+
+    private void printConfiguration(Project project, configName) {
+        //project.configurations.all { Configuration config ->
+        //    LOGGER.info "$NAME_PLUGIN ---> configurations.name: ${config.name} -------- √√√"
+        //    config.getDependencies().each { Dependency dep -> //
+        //        LOGGER.info "    configurations.dependencies: ${dep.group}:${dep.name}:${dep.version}"
+        //    }
+        //    LOGGER.info ''
+        //}
+        project.configurations.named(configName).configure { Configuration config ->
+            LOGGER.info "$NAME_PLUGIN ---> configurations.name: ${config.name} -------- √"
+            config.dependencies.each { Dependency dep -> //
+                LOGGER.info "    `${configName} ${dep.group}:${dep.name}:${dep.version}`"
+            }
+            LOGGER.info ''
+        }
+    }
+
+    private def genJavaCompileTaskName(srcSetNameMatchVariant) {
+        return "compile${srcSetNameMatchVariant.capitalize()}JavaWithJavac"
+    }
+
+    private def genKotlinCompileTaskName(srcSetNameMatchVariant) {
+        return "compile${srcSetNameMatchVariant.capitalize()}Kotlin"
+    }
+
+    private def genScalaCompileTaskName(srcSetNameMatchVariant) {
         return "compile${srcSetNameMatchVariant.capitalize()}Scala"
     }
 
-    String genScalaClassesTaskName(String srcSetNameMatchVariant) {
+    private def genScalaClassesTaskName(srcSetNameMatchVariant) {
         return "classes${srcSetNameMatchVariant.capitalize()}Scala"
-    }
-
-    private static void configureScaladoc(Project project, Object mainSourceSet) {
-        println()
-        println "configureScaladoc | ---> sourceSet.main: ${mainSourceSet.getClass().getName()}" // com.android.build.gradle.internal.api.DefaultAndroidSourceSet
-
-        project.tasks.withType(ScalaDoc).configureEach { ScalaDoc scalaDoc ->
-            scalaDoc.conventionMapping.map("classpath", () -> {
-                ConfigurableFileCollection files = project.files()
-//                files.from(mainSourceSet.getOutput())
-                files.from(mainSourceSet.getCompileClasspath())
-                return files
-            })
-            scalaDoc.setSource(mainSourceSet.extensions.getByType(ScalaSourceDirectorySet))
-//            scalaDoc.compilationOutputs.from(mainSourceSet.getOutput())
-        }
-        project.tasks.register(ScalaPlugin.SCALA_DOC_TASK_NAME, ScalaDoc, scalaDoc -> {
-            scalaDoc.setDescription("Generates Scaladoc for the main source code.")
-            scalaDoc.setGroup(JavaBasePlugin.DOCUMENTATION_GROUP)
-        })
-    }
-
-    private <T> Provider<T> getToolchainTool(Project project, BiFunction<JavaToolchainService, JavaToolchainSpec, Provider<T>> toolMapper) {
-        final JavaPluginExtension extension = extensionOf(project, JavaPluginExtension.class)
-        final JavaToolchainService service = extensionOf(project, JavaToolchainService.class)
-        return toolMapper.apply(service, extension.getToolchain())
-    }
-
-    private <T> T extensionOf(ExtensionAware extensionAware, Class<T> type) {
-        return extensionAware.getExtensions().getByType(type)
-    }
-
-    private static class IsProjectComponent implements Spec<ComponentIdentifier> {
-        @Override
-        public boolean isSatisfiedBy(ComponentIdentifier element) {
-            return element instanceof ProjectComponentIdentifier
-        }
     }
 }

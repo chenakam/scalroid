@@ -10,8 +10,8 @@ public class GreetingPluginTest {
     @Test
     public void greeterPluginAddsGreetingTaskToProject() {
         Project project = ProjectBuilder.builder().build();
-        project.getPluginManager().apply("org.example.greeting");
+        project.getPluginManager().apply("cash.bdo.scalroid");
 
-        assertTrue(project.getTasks().getByName("hello") instanceof GreetingTask);
+        assertTrue(project.getTasks().getByName("testToFile") instanceof GreetingToFileTask);
     }
 }
