@@ -26,7 +26,6 @@ import org.gradle.api.artifacts.component.ComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.attributes.Usage
 import org.gradle.api.component.SoftwareComponentFactory
-import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.FileCollection
 import org.gradle.api.file.SourceDirectorySet
 import org.gradle.api.internal.tasks.DefaultScalaSourceSet
@@ -57,6 +56,20 @@ interface ScalroidExtension {
     static final DEF_MESSAGE = 'Hi, SCALA lover!'
     static final DEF_GREETER = "${ScalaAndroidCompatPlugin.ID_PLUGIN.toUpperCase()} Developer~"
 
+    /** 默认值 false，表示：kotlin 代码引用 scala，但 scala 不引用 kotlin。这样的话`Task`不涉及循环依赖，编译正常进行。
+     * 但更为复杂的情况是：
+     * 代码交叉引用：即 kotlin 引用 scala，scala 又引用 kt。这里提供一个苟且的技巧：
+     * 1. Clean 项目（运行`./gradlew clean`）；
+     * 2. 先把 scala 中引用 kt 的代码都注释掉，并将本变量置为默认值 false（不用点击 Sync Now，点击也无妨）；
+     * 3. 编译直到通过（`./gradlew :app:compile{VARIANT}JavaWithJavac`），目录 app/build/tmp/ 下的 kotlin-classes 和 scala-classes 都有 VARIANT 相关的输出；
+     * 4. 将本变量置为默认值 true，并将在步骤 2 中注释掉的 scala 中引用 kt 的代码都取消注释；
+     * 5. 编译直到成功。
+     *
+     * 注意：每次 Clean 项目，都要将上述步骤重来一遍。*/
+    Property<Boolean> getScalaCodeReferToKt()
+    /** 默认值 true。其它同上。看 scala/kotlin 哪个注释的代价小。*/
+    Property<Boolean> getKtCodeReferToScala()
+
     Property<String> getMessage()
 
     Property<String> getGreeter()
@@ -81,6 +94,21 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
     static final ID_KOTLIN_ANDROID = 'org.jetbrains.kotlin.android'
     static final ID_PRE_BUILD = 'preBuild'
     static final ID_TEST_TO_FILE = 'testToFile'
+
+    private void checkArgsProbablyWarning(ScalroidExtension ext) {
+        final scalaReferKt = ext.scalaCodeReferToKt.get()
+        final ktReferScala = ext.ktCodeReferToScala.get()
+        final checked = false
+        final lineMsg = "(Maybe error with both `$checked`)"
+        if (scalaReferKt == ktReferScala && scalaReferKt == checked) {
+            LOGGER.warn "Parameter values may be set incorrectly. Are you sure them?\n" +
+                    "android {\n  ${NAME_PLUGIN} {\n" +
+                    "    scalaCodeReferToKt = ${scalaReferKt} $lineMsg\n" +
+                    "    ktCodeReferToScala = ${ktReferScala} $lineMsg\n" +
+                    "  }\n" +
+                    "  ..."
+        }
+    }
 
     private void testPrintParameters() {
         // project.path: :app, project.name: app, project.group: DemoMaterial3, project.version: unspecified
@@ -124,6 +152,8 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
     private void addThisPluginTask(Project project, ScalroidExtension extension, ScalaPluginExtension scalaExtension) {
         project.task(NAME_PLUGIN) {
             // 设置会优先返回（写在`build.gradle`里的）
+            extension.scalaCodeReferToKt = false
+            extension.ktCodeReferToScala = true
             extension.message = ScalroidExtension.DEF_MESSAGE
             extension.greeter = ScalroidExtension.DEF_GREETER
             doLast {
@@ -179,6 +209,12 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             // 根据`DefaultScalaSourceSet`中的这一句`scalaSourceDirectorySet.getFilter().include("**/*.java", "**/*.scala")`，表明是可以在 scala 目录下写 java 文件的。
             // 实测：虽然可以在 scala 目录写 java（并编译），但源码不能识别。但有该语句就能识别了(不用担心会串源码，有默认的过滤器)。
             sourceSet.java.srcDirs += sourceSet.scala.srcDirs // com.google.common.collect.SingletonImmutableSet<File> 或 RegularImmutableSet
+            // java、scala 两个编译器都会编译输出，`./gradlew :app:assemble`时会报错：
+            // >D8: Type `xxx.TestJavaXxx` is defined multiple times:
+            //sourceSet.java.filter.excludes += "**/scala/**"
+            sourceSet.java.filter.exclude { //org.gradle.api.internal.file.AttributeBasedFileVisitDetails it ->
+                return it.file.path.contains('/scala/')
+            }
             if (sourceSet.java.srcDirs) LOGGER.info "${sourceSet.java.srcDirs} / ${sourceSet.java.srcDirs.class}"
             if (sourceSet.kotlin) {
                 final ktSrc = sourceSet.kotlin.srcDirs // com.google.common.collect.RegularImmutableSet<File>
@@ -270,7 +306,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 //"compile${variant.name.capitalize()}Scala" // `.capitalize()`首字母大写
                 LOGGER.info ''
 
-                linkScalaCompileDependsOn(project, androidPlugin, androidExtension, workDir, variant)
+                linkScalaCompileDependsOn(project, scalroid, androidPlugin, androidExtension, workDir, variant)
 
                 LOGGER.info "<<<<<<<<<<<============ ${variant.name} DONE ===============>>>>>>>>>>>>>>>>>>>"
             }
@@ -422,7 +458,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         }
     }
 
-    private void linkScalaCompileDependsOn(Project project, Plugin androidPlugin, final androidExtension, final workDir, final variant) {
+    private void linkScalaCompileDependsOn(Project project, ScalroidExtension scalroid, Plugin androidPlugin, final androidExtension, final workDir, final variant) {
         //LOGGER.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]androidPlugin:${androidPlugin}" // com.android.build.gradle.AppPlugin@8ab260a
         //LOGGER.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]workDir:${workDir.path}" // /Users/{PATH-TO-}/demo-material-3/app/build/scalroid
         LOGGER.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]variant:${variant.name}" // githubDebug
@@ -452,7 +488,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 if (kotlinCompile) {
                     //LOGGER.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]kotlinCompile:${kotlinCompile} / ${kotlinCompile.class}" // org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
-                    wireScalaTasks(project, variant, project.tasks.named(scalaTaskName), project.tasks.named(javaTaskName), project.tasks.named(kotlinTaskName))
+                    wireScalaTasks(project, scalroid, variant, project.tasks.named(scalaTaskName), project.tasks.named(javaTaskName), project.tasks.named(kotlinTaskName))
                 } else {
                     LOGGER.warn "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]kotlinCompile:null"
                 }
@@ -462,7 +498,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         }
     }
 
-    private void wireScalaTasks(Project project, variant, TaskProvider scalaTask, TaskProvider javaTask, TaskProvider kotlinTask) {
+    private void wireScalaTasks(Project project, ScalroidExtension scalroid, variant, TaskProvider scalaTask, TaskProvider javaTask, TaskProvider kotlinTask) {
         // 参见`org.jetbrains.kotlin.gradle.plugin.KotlinAndroidPlugin`开头的`(project.kotlinExtension as KotlinAndroidProjectExtension).target = it`
         // 根据源码分析，这里已不需要进行`.castIsolatedKotlinPluginClassLoaderAware()`，也没法直接调用（其目的
         // 是过早地发现错误并给出详细的建议，见`IsolatedKotlinClasspathClassCastException`）。
@@ -487,9 +523,9 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
 
         // 这句的作用是便于分析出任务依赖关系（In order to properly wire up tasks），详见`Object registerPreJavacGeneratedBytecode(FileCollection)`文档。
         // 这句可以不要以欺骗依赖图生成循环依赖。
-        scalaOuts.builtBy(scalaTask)
-//        variant.registerJavaGeneratingTask(scalaTask, scalaTask.get().source.files)
-//        variant.registerJavaGeneratingTask(kotlinTask, kotlinTask.get().sources.files)
+//        scalaOuts.builtBy(scalaTask)
+        //variant.registerJavaGeneratingTask(scalaTask, scalaTask.get().source.files)
+        //variant.registerJavaGeneratingTask(kotlinTask, kotlinTask.get().sources.files)
 
         //final outsNew = javaOuts + kotlinOuts //.from(kotlinOuts)
         //final classpathKey = variant.registerPreJavacGeneratedBytecode(outsNew)
@@ -501,7 +537,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         // 参数`classpathKey`在注册（`variant.registerPreJavacGeneratedBytecode(fileCol)`）之前传入（即`fileCol`）的所有值。
         // 简单来说，每次调用下面的方法，返回值都包含[除本次注册外]之前注册时入参的所有`FileCollection`。
         // 而如果没有参数，则包含所有已注册的值。
-        final compileClasspath = variant.getCompileClasspath(/*classpathKey*/)
+//        final compileClasspath = variant.getCompileClasspath(/*classpathKey*/)
         // org.gradle.api.internal.file.collections.DefaultConfigurableFileCollection
         //LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]variant.getCompileClasspath(classpathKey):${compileClasspath} / ${compileClasspath.class}"
         // TODO:
@@ -510,33 +546,54 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         //  scalroid ---> [wireScalaTasks]variant.getCompileClasspath(classpathKey):[/Users/weichou/git/bdo.cash/demo-material-3/app/build/intermediates/compile_and_runtime_not_namespaced_r_class_jar/
         //    githubDebug/R.jar, /Users/weichou/.gradle/caches/transforms-3/893b9b5a0019ab2d13f957bcf2fabcb9/transformed/viewbinding-7.3.1-api.jar, /Users/weichou/.gradle/caches/transforms-3/3b9fa4710e9e16ecd783cc23f2a62967/transformed/navigation-ui-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/b4c5cd6f5d69a09c90e3ea53830c48f5/transformed/navigation-ui-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/7c5ae5c220196941122f9db4d7a639bc/transformed/material-1.7.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/a2622ad63284a4fbebfb584b9b851884/transformed/appcompat-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/6c3948d45ddaf709ba26745189eab999/transformed/viewpager2-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/2a8d540a7e825c31c133e1550351db89/transformed/navigation-fragment-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/d9907136fb1ec2be0470c0c515d25b44/transformed/navigation-fragment-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/6eaf265bb3918c4fd1dce0869a434f72/transformed/fragment-ktx-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/3ff5ce784625b6b2d8a5c8ed94aa647c/transformed/fragment-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/27c0c7f932da50fcd00c251ed8922e6d/transformed/navigation-runtime-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/b010a8c66f1d64f1d21c27bb1beb821c/transformed/navigation-runtime-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/f151321734e20d7116485bb3ab462df6/transformed/activity-ktx-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/21307ac95e78f6bab6ef32fc6c8c8597/transformed/activity-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/b7a04d7ac46f005b9d948413fa63b076/transformed/navigation-common-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/7a98affa0f1b253f31ac3690fb7b577b/transformed/navigation-common-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/49780de7b782ff560647221ad2cc9d58/transformed/lifecycle-viewmodel-savedstate-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/ec53663f906b415395ef3a78e7add5aa/transformed/lifecycle-viewmodel-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/498d61dce25ec5c15c1a4140b70f1b13/transformed/lifecycle-runtime-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm/1.6.1/97fd74ccf54a863d221956ffcd21835e168e2aaa/kotlinx-coroutines-core-jvm-1.6.1.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlinx/kotlinx-coroutines-android/1.6.1/4e61fcdcc508cbaa37c4a284a50205d7c7767e37/kotlinx-coroutines-android-1.6.1.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk8/1.7.20/eac6656981d9d7156e838467d2d8d79093b1570/kotlin-stdlib-jdk8-1.7.20.jar, /Users/weichou/.gradle/caches/transforms-3/394f4ba5a7303202a56e467034c8c851/transformed/core-ktx-1.9.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/6e9fde4cc1497ecd85ffdf980a60e5ab/transformed/appcompat-resources-1.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/aa25fefefb4284675752d1b8716a8bf4/transformed/drawerlayout-1.1.1-api.jar, /Users/weichou/.gradle/caches/transforms-3/6f5d72cc112503558a75fc45f0fbfe22/transformed/coordinatorlayout-1.1.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/f66c58055f09c54df80d3ac39cfc8ed7/transformed/dynamicanimation-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/76fb2fc3976e6e2590393baaa768ea01/transformed/recyclerview-1.1.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/d5505f9d57d8c6a72c4bfbea8e0d1d59/transformed/transition-1.4.1-api.jar, /Users/weichou/.gradle/caches/transforms-3/cb376832b44347e0e2863a0efbfb46c1/transformed/vectordrawable-animated-1.1.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/51c160350e1db060225cf076555bddc5/transformed/vectordrawable-1.1.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/b437c042a4fb25b5473beb3aa3810946/transformed/viewpager-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/c711a0ee0692c4fae81cdd671dadbde0/transformed/slidingpanelayout-1.2.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/60367c0dc3b93ae22d44974ed438a5f5/transformed/customview-1.1.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/05f2d7edda9b38183e0acbcdee061d41/transformed/legacy-support-core-utils-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/5bb317b860d652a7e95da35400298e99/transformed/loader-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/0c3f5120a16030c3b02e209277f606e0/transformed/core-1.9.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/c9dedd1f96993d0760d55df081a29879/transformed/cursoradapter-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/8bb096c8444b515fe520f2a8e48caab1/transformed/savedstate-ktx-1.2.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/cdb42f31a8e9bad7a8ea34dbb5e7b7f6/transformed/savedstate-1.2.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/9c4ff74ae88f4d922542d59f88faa6bc/transformed/cardview-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/ee8da9fe5cd86ed12e7a623b8098a166/transformed/lifecycle-runtime-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/b81c0a66f40e81ce8db2df92a1963d5b/transformed/versionedparcelable-1.1.1-api.jar, /Users/weichou/.gradle/caches/transforms-3/83b5d525a0ebd9bc00322953f05c96f4/transformed/lifecycle-viewmodel-2.5.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/androidx.collection/collection-ktx/1.1.0/f807b2f366f7b75142a67d2f3c10031065b5168/collection-ktx-1.1.0.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/androidx.collection/collection/1.1.0/1f27220b47669781457de0d600849a5de0e89909/collection-1.1.0.jar, /Users/weichou/.gradle/caches/transforms-3/f306f739dc2177bf68711c65fe4e11e2/transformed/lifecycle-livedata-2.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/dfab4e028be7115b8ccc3796fb2e0428/transformed/core-runtime-2.1.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/androidx.arch.core/core-common/2.1.0/b3152fc64428c9354344bd89848ecddc09b6f07e/core-common-2.1.0.jar, /Users/weichou/.gradle/caches/transforms-3/82360dce7c90d10221f06f4ddfa5bc67/transformed/lifecycle-livedata-core-ktx-2.5.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/8d444fd9988175cecd13055f04813b91/transformed/lifecycle-livedata-core-2.5.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/androidx.lifecycle/lifecycle-common/2.5.0/1fdb7349701e9cf2f0a69fc10642b6fef6bb3e12/lifecycle-common-2.5.0.jar, /Users/weichou/.gradle/caches/transforms-3/afa292a87f73b3eaac7c83ceefd92574/transformed/interpolator-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/a7341bbf557f0eee7488093003db0f01/transformed/documentfile-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/46ecd33fc8b0aff76d637a8fc3226518/transformed/localbroadcastmanager-1.0.0-api.jar, /Users/weichou/.gradle/caches/transforms-3/2e9cbd427ac36e8b9e40572d70105d5c/transformed/print-1.0.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/androidx.annotation/annotation/1.3.0/21f49f5f9b85fc49de712539f79123119740595/annotation-1.3.0.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk7/1.7.20/2a729aa8763306368e665e2b747abd1dfd29b9d5/kotlin-stdlib-jdk7-1.7.20.jar, /Users/weichou/.gradle/caches/transforms-3/f45fdb3a6f32f3117a02913a5475531b/transformed/annotation-experimental-1.3.0-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/1.7.20/726594ea9ba2beb2ee113647fefa9a10f9fabe52/kotlin-stdlib-1.7.20.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-common/1.7.20/e15351bdaf9fa06f009be5da7a202e4184f00ae3/kotlin-stdlib-common-1.7.20.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations/13.0/919f0dfe192fb4e063e7dacadee7f8bb9a2672a9/annotations-13.0.jar, /Users/weichou/.gradle/caches/transforms-3/b61a19ce0ffb6b0eab4a6ede97932e2f/transformed/constraintlayout-2.1.4-api.jar, /Users/weichou/.gradle/caches/transforms-3/632e82547c61849d331ad6e31a1fb88c/transformed/annoid-af2b53cfce-api.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/com.github.dedge-space/scala-lang/253dc64cf9/51c97f073e45e5183af054e4596869d035f47b2d/scala-lang-253dc64cf9.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.scala-lang/scala-compiler/2.11.12/a1b5e58fd80cb1edc1413e904a346bfdb3a88333/scala-compiler-2.11.12.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.scala-lang/scala-reflect/2.11.12/2bb23c13c527566d9828107ca4108be2a2c06f01/scala-reflect-2.11.12.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.scala-lang.modules/scala-xml_2.11/1.0.5/77ac9be4033768cf03cc04fbd1fc5e5711de2459/scala-xml_2.11-1.0.5.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.scala-lang.modules/scala-parser-combinators_2.11/1.0.4/7369d653bcfa95d321994660477a4d7e81d7f490/scala-parser-combinators_2.11-1.0.4.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/org.scala-lang/scala-library/2.12.17/4a4dee1ebb59ed1dbce014223c7c42612e4cddde/scala-library-2.12.17.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/com.github.dedge-space/annoguard/v1.0.5-beta/d9f31382b1d2d4bbf8e34de4b7ef6a547277cfdb/annoguard-v1.0.5-beta.jar, /Users/weichou/.gradle/caches/modules-2/files-2.1/com.google.code.gson/gson/2.8.0/c4ba5371a29ac9b2ad6129b1d39ea38750043eff/gson-2.8.0.jar, /Users/weichou/git/bdo.cash/demo-material-3/app/build/tmp/kotlin-classes/githubDebug]
         //LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]variant.getCompileClasspath(classpathKey):${compileClasspath.files}"
-        scalaTask.configure { scala -> // ...
-            scala.classpath += compileClasspath
-//            scala.classpath += kotlinOuts
-        }
+//        scalaTask.configure { scala -> // ...
+//            scala.classpath += compileClasspath
+//        }
         // 该方法没有接口，无法调用。
         //final prevRegistered = variant.getGeneratedBytecode()
         // 根据源码分析，只有没注册过的，才需进行注册（不过这里已经是构建的最后了，没有后续编译任务依赖这个 compileClasspath，用不上了）。
-        final clzPathKey = variant.registerPreJavacGeneratedBytecode(scalaOuts)
-        kotlinTask.configure { kt -> // `kt.classpath`用`kt.libraries`替代了。
-            //final files = kt.libraries as ConfigurableFileCollection
-            //files.from(variant.getGeneratedBytecode() - prevRegistered) //variant.getCompileClasspath(clzPathKey) - files)
-            kt.libraries.from(scalaOuts) // 根据上文和源码，直接这样用即可。
+//        final clzPathKey = variant.registerPreJavacGeneratedBytecode(scalaOuts)
+//        kotlinTask.configure { kt -> // `kt.classpath`用`kt.libraries`替代了。
+        //final files = kt.libraries as ConfigurableFileCollection
+        //files.from(variant.getGeneratedBytecode() - prevRegistered) //variant.getCompileClasspath(clzPathKey) - files)
+//            kt.libraries.from(scalaOuts) // 根据上文和源码，直接这样用即可。
 
-            if (!kt.incremental) {
-                LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]variant:${variant.name}, kt.incremental:${kt.incremental}, change to true."
-                //kt.incremental = true // 用不到下面的，该值也就不用设置了。
+        /*if (!kt.incremental) {
+            LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]variant:${variant.name}, kt.incremental:${kt.incremental}, change to true."
+            //kt.incremental = true // 用不到下面的，该值也就不用设置了。
+        }*/
+        // 报错：property 'classpathSnapshotProperties.useClasspathSnapshot' cannot be changed any further.
+        // 根据源码，发现`kt.classpathSnapshotProperties`的任何值都是不能改变的：`task.classpathSnapshotProperties.classpathSnapshot.from(xxx).disallowChanges()`。
+        // TODO: 要改变它的值，需要在 gradle.properties 中增加一行：
+        //  `kotlin.incremental.useClasspathSnapshot=true`
+        //  实测通过，写在 local.properties 也可以。
+        //  不过，实测不适用于 scala-kotlin 交叉编译。https://blog.jetbrains.com/zh-hans/kotlin/2022/07/a-new-approach-to-incremental-compilation-in-kotlin/
+        //kt.classpathSnapshotProperties.classpathSnapshot.from(scalaOuts)
+        /*if (!kt.classpathSnapshotProperties.useClasspathSnapshot.get()) {
+            LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]variant:${variant.name}, useClasspathSnapshot:${kt.classpathSnapshotProperties.useClasspathSnapshot.get()}, change to true is disallow."
+            //kt.classpathSnapshotProperties.useClasspathSnapshot.set(true)
+        }*/
+//        }
+
+        // TODO: 综上，简写如下：
+        LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]scalaCodeReferToKt:${scalroid.scalaCodeReferToKt.get()}, ktCodeReferToScala:${scalroid.ktCodeReferToScala.get()}"
+        checkArgsProbablyWarning(scalroid)
+
+        final classpathKey = variant.registerPreJavacGeneratedBytecode(scalaOuts)
+        if (scalroid.scalaCodeReferToKt.get()) {
+            scalaTask.configure { scala -> // ...
+                scala.classpath += variant.getCompileClasspath(classpathKey)
             }
-            // 报错：property 'classpathSnapshotProperties.useClasspathSnapshot' cannot be changed any further.
-            // 根据源码，发现`kt.classpathSnapshotProperties`的任何值都是不能改变的：`task.classpathSnapshotProperties.classpathSnapshot.from(xxx).disallowChanges()`。
-            // TODO: 要改变它的值，需要在 gradle.properties 中增加一行：
-            //  `kotlin.incremental.useClasspathSnapshot=true`
-            //  实测通过，写在 local.properties 也可以。
-            //  不过，实测不适用于 scala-kotlin 交叉编译。https://blog.jetbrains.com/zh-hans/kotlin/2022/07/a-new-approach-to-incremental-compilation-in-kotlin/
-            //kt.classpathSnapshotProperties.classpathSnapshot.from(scalaOuts)
-            if (!kt.classpathSnapshotProperties.useClasspathSnapshot.get()) {
-                LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]variant:${variant.name}, useClasspathSnapshot:${kt.classpathSnapshotProperties.useClasspathSnapshot.get()}, change to true is disallow."
-                //kt.classpathSnapshotProperties.useClasspathSnapshot.set(true)
+            // 抑制警告：- Gradle detected a problem with the following location: '/Users/weichou/git/bdo.cash/demo-material-3/app/build/tmp/scala-classes/githubDebug'.
+            // Reason: Task ':app:mergeGithubDebugJavaResource' uses this output of task ':app:compileGithubDebugScala' without declaring an explicit or implicit dependency. This can lead to incorrect results being produced, depending on what order the tasks are executed. Please refer to https://docs.gradle.org/7.4/userguide/validation_problems.html#implicit_dependency for more details about this problem.
+            final mergeJavaRes = project.tasks.findByName(genMergeJavaResourceTaskName(variant.name))
+            if (mergeJavaRes) mergeJavaRes.dependsOn scalaTask
+        } else {
+            scalaOuts.builtBy(scalaTask)
+        }
+        if (scalroid.ktCodeReferToScala.get()) {
+            kotlinTask.configure { kt -> // ...
+                kt.libraries.from(scalaOuts)
             }
         }
     }
@@ -591,5 +648,9 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
 
     private def genScalaClassesTaskName(srcSetNameMatchVariant) {
         return "classes${srcSetNameMatchVariant.capitalize()}Scala"
+    }
+
+    private def genMergeJavaResourceTaskName(srcSetNameMatchVariant) {
+        return "merge${srcSetNameMatchVariant.capitalize()}JavaResource"
     }
 }
