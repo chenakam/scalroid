@@ -22,11 +22,27 @@ gradlePlugin {
     }
 }
 
-//repositories {
-//    mavenCentral()
-//}
-// 在预编译插件中使用外部插件，需要在此导入，然后在`src/main/groovy/a.b.c.xxx.gradle`文件
-// 中写`plugins { id 'com.bmuschko.docker-remote-api' }`。
-//dependencies {
-//    implementation 'com.bmuschko:gradle-docker-plugin:6.4.0'
-//}
+repositories {
+    google()
+    mavenCentral()
+}
+dependencies {
+    // 在预编译插件中使用外部插件，需要在此导入，然后在`src/main/groovy/a.b.c.xxx.gradle`文件
+    // 中写`plugins { id 'com.bmuschko.docker-remote-api' }`。
+    //implementation 'com.bmuschko:gradle-docker-plugin:6.4.0'
+
+    // 应避免在此导入特定版本的包。因为此处的版本号会限制
+    // `plugins {
+    //    id 'com.android.application' version '7.3.1' apply false
+    //    id 'com.android.library' version '7.3.1' apply false
+    // }`
+    // 的版本号（通常在项目根目录下的 build.gradle 文件中）。
+    //implementation 'com.android.tools.build:gradle:7.3.1'
+
+    // 测试框架：spock.lang.Specification
+    testImplementation(
+            //'junit:junit:4.12',
+            //'org.codehaus.groovy:groovy-all:2.4.11',
+            'org.spockframework:spock-core:1.3-groovy-2.4'
+    )
+}

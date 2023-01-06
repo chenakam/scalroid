@@ -24,6 +24,8 @@ import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.component.ComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.artifacts.type.ArtifactTypeDefinition
+import org.gradle.api.attributes.Category
 import org.gradle.api.attributes.Usage
 import org.gradle.api.component.SoftwareComponentFactory
 import org.gradle.api.file.FileCollection
@@ -49,6 +51,9 @@ import org.gradle.api.tasks.scala.ScalaDoc
 import javax.inject.Inject
 import java.util.concurrent.Callable
 
+import static org.gradle.api.attributes.Category.CATEGORY_ATTRIBUTE
+import static org.gradle.api.attributes.Category.LIBRARY
+import static org.gradle.api.attributes.Usage.JAVA_API
 import static org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE
 import static org.gradle.api.internal.lambdas.SerializableLambdas.spec
 
@@ -80,7 +85,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
     //  `./gradlew :app:compileGithubDebugJavaWithJavac --stacktrace`
     //  `./gradlew :app:compileGithubDebugJavaWithJavac --info` for LOGGER.info('...')
     //  `./gradlew :app:compileGithubDebugJavaWithJavac --debug`
-    protected static final Logger LOGGER = Logging.getLogger(ScalaAndroidCompatPlugin.class)
+    protected static final Logger LOGGER = Logging.getLogger(ScalaAndroidCompatPlugin)
 
     static final NAME_PLUGIN = 'scalroid'
     static final NAME_ANDROID_EXTENSION = 'android'
@@ -110,7 +115,8 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         }
     }
 
-    private void testPrintParameters() {
+    private void testPrintParameters(Project project) {
+        LOGGER.warn "applying plugin `$ID_PLUGIN` by ${project}"
         // project.path: :app, project.name: app, project.group: DemoMaterial3, project.version: unspecified
         //LOGGER.info "$NAME_PLUGIN ---> project.path: ${project.path}, project.name: ${project.name}, project.group: ${project.group}, project.version: ${project.version}"
         //LOGGER.info ''
@@ -128,7 +134,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
 
     @Override
     void apply(Project project) {
-        testPrintParameters()
+        testPrintParameters(project)
         if (![ID_ANDROID_APP, ID_ANDROID_LIB, ID_ANDROID_BASE].any { project.plugins.findPlugin(it) }) {
             // apply plugins 具有顺序性。
             throw new ProjectConfigurationException("Please apply `$ID_ANDROID_APP` or `$ID_ANDROID_LIB` plugin and `$ID_KOTLIN_ANDROID` before applying `$ID_PLUGIN` plugin.", new Throwable())
@@ -143,13 +149,14 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         ScalaPluginExtension scalaExtension = project.extensions.getByName(NAME_SCALA_EXTENSION)
         addScalaPluginExtensionToScalroidClosure(extension, scalaExtension)
 
+        final isLibrary = project.plugins.hasPlugin(ID_ANDROID_LIB)
         // 2. 设置 Scala 源代码目录，并链接编译 Task 的依赖关系。
-        linkScalaAndroidResourcesAndTasks(project, extension)
+        linkScalaAndroidResourcesAndTasks(project, extension, isLibrary)
         // 3. 最后，加入本插件的`Task`。
-        addThisPluginTask(project, extension, scalaExtension)
+        addThisPluginTask(project, extension, scalaExtension, isLibrary)
     }
 
-    private void addThisPluginTask(Project project, ScalroidExtension extension, ScalaPluginExtension scalaExtension) {
+    private void addThisPluginTask(Project project, ScalroidExtension extension, ScalaPluginExtension scalaExtension, boolean isLibrary) {
         project.task(NAME_PLUGIN) {
             // 设置会优先返回（写在`build.gradle`里的）
             extension.scalaCodeReferToKt = false
@@ -164,6 +171,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 LOGGER.error "Scala zinc version: $version"
             }
         }
+        if (isLibrary) return
         project.tasks.register(ID_TEST_TO_FILE, GreetingToFileTask) {
             destination = project.objects.fileProperty()
             destination.set(project.layout.buildDirectory.file("${NAME_PLUGIN}/test-to-file.txt"))
@@ -174,23 +182,14 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         }
     }
 
-    private void linkScalaAndroidResourcesAndTasks(Project project, ScalroidExtension scalroid) {
+    private void linkScalaAndroidResourcesAndTasks(Project project, ScalroidExtension scalroid, boolean isLibrary) {
         final androidExtension = project.extensions.getByName(NAME_ANDROID_EXTENSION)
-        boolean isLibrary
-        Plugin androidPlugin
-        if (project.plugins.hasPlugin(ID_ANDROID_LIB)) {
-            isLibrary = true
-            androidPlugin = project.plugins.findPlugin(ID_ANDROID_LIB)
-        } else {
-            isLibrary = false
-            androidPlugin = project.plugins.findPlugin(ID_ANDROID_APP)
-        }
+        Plugin androidPlugin = isLibrary ? project.plugins.findPlugin(ID_ANDROID_LIB) : project.plugins.findPlugin(ID_ANDROID_APP)
         addPluginExtensionToAndroidClosure(androidExtension, scalroid)
 
         //final scalaBasePlugin = project.plugins.findPlugin(ScalaBasePlugin)
         final workDir = project.layout.buildDirectory.file(NAME_PLUGIN).get().asFile
-
-        project.tasks.getByName(ID_PRE_BUILD).doLast { workDir.mkdirs() }
+        //project.tasks.getByName(ID_PRE_BUILD).doLast { workDir.mkdirs() }
 
         // 实测在`project.afterEvaluate`前后，`sourceSet`数量不一样。
         // 但是如果不执行这次，`build.gradle`中的`sourceSets.main.scala.xxx`会报错。
@@ -220,8 +219,11 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 final ktSrc = sourceSet.kotlin.srcDirs // com.google.common.collect.RegularImmutableSet<File>
                 // 同理：有了这句，kt 引用 scala 就不标红了。
                 sourceSet.kotlin.srcDirs += sourceSet.scala.srcDirs // LinkedHashSet<File>
-                // 既然…那就…
+                // 既然…那就…（保险起见，让 scala 引用 java 目录下的文件不标红）。
                 sourceSet.scala.srcDirs += ktSrc
+                sourceSet.scala.filter.exclude { // 由于`ktSrc`包含 java 目录。实测：如果没有这句，会把 java 目录下的编译到 scala-classes 下，最终导致打包 jar 时某些 Xxx.class 重复。
+                    return it.file.path.contains('/java/')
+                }
             }
             LOGGER.info "$NAME_PLUGIN ---> java.srcDirs:" + sourceSet.java.srcDirs
             LOGGER.info "$NAME_PLUGIN ---> scala.srcDirs:" + sourceSet.scala.srcDirs
@@ -231,7 +233,10 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         androidExtension.sourceSets.whenObjectAdded { sourceSet -> // androidTest, main, test
             sourceSetConfig.call(sourceSet)
         }
-
+        // 实测在 library 里，whenObjectAdded 不执行。
+        androidExtension.sourceSets.each { sourceSet -> // ...
+            sourceSetConfig.call(sourceSet)
+        }
         final mainSourceSet = androidExtension.sourceSets.getByName('main')
         LOGGER.info ''
         LOGGER.info "$NAME_PLUGIN ---> mainSourceSet: $mainSourceSet"
@@ -244,7 +249,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         project.afterEvaluate {
             LOGGER.info ''
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
-            printConfiguration(project, 'implementation')
+            //printConfiguration(project, 'implementation')
 
             //dependencies {
             //    这里的`implementation`就是`Configuration`的名字，是在`Android`插件中定义的。
@@ -259,7 +264,11 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
             final variantsAll = androidExtension.testVariants + (isLibrary ? androidExtension.libraryVariants : androidExtension.applicationVariants)
             final variantsNames = new java.util.HashSet<String>()
-            variantsAll.each { variant -> variantsNames.add(variant.name) }
+            final variantsMap = new java.util.HashMap<String, Object>()
+            variantsAll.each { variant ->
+                variantsNames.add(variant.name)
+                variantsMap.put(variant.name, variant)
+            }
 
             final test = 'test'
             final androidTest = 'androidTest'
@@ -268,9 +277,8 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             LOGGER.info "$NAME_PLUGIN ---> variantsNames: ${variantsNames.join(", ")}"
             LOGGER.info ''
 
-            final incrementalAnalysisUsage = factory.named(Usage, "incremental-analysis")
             androidExtension.sourceSets.each { sourceSet -> // androidTest, test, main
-                LOGGER.info "$NAME_PLUGIN <<<===>>> sourceSet: $sourceSet"
+                LOGGER.info "$NAME_PLUGIN <<<===>>> sourceSet.name:${sourceSet.name}, sourceSet:$sourceSet"
 
                 ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
                 // 实测发现：`sourceSet.name`和`variant.name`有些不同：
@@ -281,9 +289,9 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 if (srcSetNameMatchVariant != 'main') {
                     if (!variantsNames.contains(srcSetNameMatchVariant)) {
                         if (srcSetNameMatchVariant.startsWith(androidTest)) {
-                            srcSetNameMatchVariant = srcSetNameMatchVariant.substring(androidTest.length()).uncapitalize() + androidTest.capitalize()
+                            if (srcSetNameMatchVariant != androidTest) srcSetNameMatchVariant = srcSetNameMatchVariant.substring(androidTest.length()).uncapitalize() + androidTest.capitalize()
                         } else if (srcSetNameMatchVariant.startsWith(test)) {
-                            srcSetNameMatchVariant = srcSetNameMatchVariant.substring(test.length()).uncapitalize() + test.capitalize()
+                            if (srcSetNameMatchVariant != test) srcSetNameMatchVariant = srcSetNameMatchVariant.substring(test.length()).uncapitalize() + test.capitalize()
                         } else if (srcSetNameMatchVariant.contains(androidTest.capitalize()) || srcSetNameMatchVariant.contains(test.capitalize()) || srcSetNameMatchVariant.contains(androidTest) || srcSetNameMatchVariant.contains(test)) {
                             // 不在开头，那就在中间或结尾，即：`androidTest`或`test`的首字母大写。
                             //LOGGER.info "$NAME_PLUGIN ---> exception:${srcSetNameMatchVariant}"
@@ -296,8 +304,9 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                         return
                     }
                 }
+                final variant = variantsMap[srcSetNameMatchVariant] // 没有名为`main`的
                 //ScalaRuntime scalaRuntime = project.extensions.getByName(SCALA_RUNTIME_EXTENSION_NAME)
-                configureScalaCompile(project, sourceSet, mainSourceSet, androidExtension, srcSetNameMatchVariant, incrementalAnalysisUsage)
+                configureScalaCompile(project, variant, sourceSet, mainSourceSet, androidExtension, srcSetNameMatchVariant, isLibrary)
             }
 
             LOGGER.info "||||||||| |||||||||| |||||||||| link all variants depends on |||||||||| |||||||||| ||||||||||"
@@ -318,18 +327,16 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 !(it.contains(androidTest.capitalize()) || it.contains(test.capitalize()) || it.contains(androidTest) || it.contains(test))
             }
             final possibleVariant = variantsAll.find { it.name == possibleVariantName }
-            configureScaladocAndIncrementalAnalysis(project, mainSourceSet, possibleVariant)
+            configureScaladocAndIncrementalAnalysis(project, mainSourceSet, possibleVariant, isLibrary)
         }
     }
 
-    void configureScaladocAndIncrementalAnalysis(Project project, mainSourceSet, possibleVariant) {
-        final Configuration incrementalAnalysisElements = project.configurations.getByName("incrementalScalaAnalysisElements")
+    void configureScaladocAndIncrementalAnalysis(Project project, mainSourceSet, possibleVariant, boolean isLibrary) {
         final mainScalaTaskName = genScalaCompileTaskName(possibleVariant.name) // mainSourceSet.name
         final TaskProvider<ScalaCompile> compileScala = project.tasks.withType(ScalaCompile).named(mainScalaTaskName)
         final mainScalaCompile = compileScala.get()
-        incrementalAnalysisElements.outgoing.artifact(mainScalaCompile.analysisMappingFile) {
-            builtBy(compileScala)
-        }
+        project.configurations.incrementalScalaAnalysisElements.outgoing.artifact(mainScalaCompile
+                .analysisMappingFile) { builtBy(compileScala) }
         configureScaladoc(project, mainSourceSet, mainScalaCompile)
     }
 
@@ -387,42 +394,48 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         return true
     }
 
-    private void configureScalaCompile(Project project, sourceSet, mainSourceSet, androidExtension, srcSetNameMatchVariant, Usage incrementalAnalysisUsage) {
+    private void configureScalaCompile(Project project, variant, sourceSet, mainSourceSet, androidExtension, src$vaName, boolean isLibrary) {
         final ScalaSourceDirectorySet scalaDirectorySet = sourceSet.extensions.getByType(ScalaSourceDirectorySet)
-        LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]scalaDirectorySet.name:${scalaDirectorySet.name}, scalaDirectorySet.displayName:${scalaDirectorySet.displayName}"
+        Configuration classpathBySourceSetImpl = project.configurations.getByName(sourceSet.implementationConfigurationName)
+        //printConfiguration(project, sourceSet.implementationConfigurationName)
 
         ScalaSourceDirectorySet mainScalaDirSet
-        Configuration mainClasspath
+        Configuration mainClasspathImpl = null
         if (sourceSet != mainSourceSet) {
             mainScalaDirSet = mainSourceSet.extensions.getByType(ScalaSourceDirectorySet)
-            // 逻辑上应等同于`project.configurations.implementation`
-            mainClasspath = project.configurations.getByName(mainSourceSet.implementationConfigurationName)
+            // 等同于`project.configurations.implementation`
+            mainClasspathImpl = project.configurations.getByName(mainSourceSet.implementationConfigurationName)
 
             LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]mainScalaDirSet.name:${mainScalaDirSet.name}, mainScalaDirSet.displayName:${mainScalaDirSet.displayName}"
             LOGGER.info ''
         }
+        // 打印查看，各 variant 的 implementation 都包含了 main 的（但是 androidTestXxx 没有，所以还是要加上），且包含 api, compileOnly 等：
+        // xxxConfig.hierarchy.each { Configuration it ->
+        //     println " -- ${it}"
+        //     it.attributes.each { attrs -> } …
+        // 实测：有时不在`config.extendsFrom()`的第一层不行，所以得展开（`.getHierarchy()`）。
+        def classpathConfigs = classpathBySourceSetImpl.hierarchy.toList() + (mainClasspathImpl ? mainClasspathImpl.hierarchy.toList() : [])
+        classpathConfigs.removeIf { !it || it.dependencies.isEmpty() }
+        classpathConfigs = classpathConfigs.toSet()
+        LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]sourceSet.name:${sourceSet.name}, classpathConfigs.size:${classpathConfigs.size()}"
 
-        Configuration classpathBySourceSet = project.configurations.getByName(sourceSet.implementationConfigurationName)
-        LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]sourceSet.implementationConfigurationName:${sourceSet.implementationConfigurationName}"
-        //printConfiguration(project, sourceSet.implementationConfigurationName)
-
-        Configuration incrementalAnalysis = project.configurations.create("incrementalScalaAnalysisFor${srcSetNameMatchVariant.capitalize()}")
+        Configuration incrementalAnalysis = project.configurations.create("incrementalScalaAnalysisFor${src$vaName.capitalize()}")
         incrementalAnalysis.description = "Incremental compilation analysis files for ${sourceSet.displayName}"
         incrementalAnalysis.visible = false
         incrementalAnalysis.canBeResolved = true
         incrementalAnalysis.canBeConsumed = false
-        if (mainClasspath) incrementalAnalysis.extendsFrom(classpathBySourceSet, mainClasspath) // ...
-        else incrementalAnalysis.extendsFrom(classpathBySourceSet)
-        incrementalAnalysis.attributes.attribute(USAGE_ATTRIBUTE, incrementalAnalysisUsage)
+        incrementalAnalysis.extendsFrom = classpathConfigs
+        incrementalAnalysis.attributes.attribute(USAGE_ATTRIBUTE, factory.named(Usage, "incremental-analysis"))
 
-        project.tasks.register(genScalaCompileTaskName(srcSetNameMatchVariant), ScalaCompile) { ScalaCompile scalaCompile ->
-            LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]compileTaskName:${scalaCompile.name}"
+        project.tasks.register(genScalaCompileTaskName(src$vaName), ScalaCompile) { ScalaCompile scalaCompile ->
+            LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]compileTaskName:${scalaCompile.name}, variant:${variant ? variant.name : null}"
 
-            scalaCompile.classpath = project.configurations.create("scalaBaseClasspathFor${srcSetNameMatchVariant.capitalize()}")
-                    .extendsFrom(project.configurations.implementation, classpathBySourceSet)
+            final compilerClasspathName = "${src$vaName}ScalaCompileClasspath"
+            final compilerClasspath = project.configurations.create(compilerClasspathName).setExtendsFrom(classpathConfigs)
+
+            scalaCompile.classpath = compilerClasspath
             // TODO: 实测要把`android.jar`也加入 classpath，否则如果 scala 代码间接（或直接）引用如`android.app.Activity`，会报如下错误：
-            // [Error] /Users/.../demo-material-3/app/src/main/scala/com/example/demomaterial3/Test2.scala:9:7: Class android.app.Activity not found - continuing with a stub.
-            // one error found
+            // [Error] /Users/.../demo-material-3/app/src/main/scala/com/example/demomaterial3/Test2.scala:9:7: Class android.app.Activity not found - continuing with a stub. one error found...
             scalaCompile.classpath += androidExtension.bootClasspathConfig.mockableJarArtifact // mock `android.jar`
 
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
@@ -432,6 +445,46 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             if (mainScalaDirSet) scalaCompile.source += mainScalaDirSet
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
 
+            // 如有问题请参见：
+            // https://docs.gradle.org/current/userguide/variant_attributes.html
+            // https://docs.gradle.org/current/userguide/variant_model.html#sec:variant-aware-matching
+            if (!isLibrary) {
+                // USAGE_ATTRIBUTE 可用 JAVA_API 或 JAVA_RUNTIME，前者包含后者。用 JAVA_API 有 4 个冲突（4 选一），用 JAVA_RUNTIME 二选一即可（现在 ok 了两个都行）。
+                compilerClasspath.attributes.attribute(USAGE_ATTRIBUTE, factory.named(Usage, JAVA_API))
+                compilerClasspath.attributes.attribute(CATEGORY_ATTRIBUTE, factory.named(Category, LIBRARY))
+                // com.android.build.gradle.internal.publishing.AndroidArtifacts.ArtifactType.CLASSES_JAR.type
+                final artifactType = ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE
+                compilerClasspath.attributes.attribute(artifactType, 'android-classes-jar')
+
+                //final apiElements = project.configurations.findByName("${src$vaName}ApiElements")
+                final runtimeElements = project.configurations.findByName("${src$vaName}RuntimeElements")
+                if (runtimeElements) {
+                    final forceAttrs = ['.attributes.BuildType', 'org.gradle.usage', 'org.gradle.category', '.jvm.environment', '.platform.type']
+                    //                               debug/release,          java-runtime,       library,                android,            androidJvm
+                    runtimeElements.attributes.each { attrs ->
+                        attrs.keySet().each { attr ->
+                            final value = attrs.getAttribute(attr)
+                            LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]attribute > ${attr.name} -> ${value} / ${value.class}"
+                            if (compilerClasspath.attributes.contains(attr)) {
+                                //final valueOld = compilerClasspath.attributes.getAttribute(attr)
+                                //if (value == valueOld) LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]configuring `$compilerClasspathName`, SAME old attribute value."
+                                //else LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]configuring `$compilerClasspathName`, old attribute value fund: ${valueOld}."
+                            } else if (forceAttrs.any { attr.name.contains(it) }) {
+                                LOGGER.info "$NAME_PLUGIN ---> [configureScalaCompile]accept > ${attr.name} -> ${value}"
+                                /*if (attr.name.contains('.attributes.Variant')) {
+                                    final debug = 'debug'
+                                    final release = 'release'
+                                    final attrClass = Class.forName(attr.name, true, compilation.class.classLoader)
+                                    final valueAdj = [debug, debug.capitalize()].any { src$vaName.contains(it) } ? debug : release
+                                    compilerClasspath.attributes.attribute(attr, factory.named(attrClass, valueAdj))
+                                } else {*/
+                                compilerClasspath.attributes.attribute(attr, value)
+                                //}
+                            }
+                        }
+                    }
+                }
+            }
             scalaCompile.description = "Compiles the ${scalaDirectorySet}."
             //scalaCompile.javaLauncher.convention(getToolchainTool(project, JavaToolchainService::launcherFor))
             scalaCompile.analysisMappingFile.set(project.layout.buildDirectory.file("scala/compilerAnalysis/${scalaCompile.name}.mapping"))
@@ -444,17 +497,14 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             scalaCompile.analysisFiles.from(incrementalAnalysis.incoming.artifactView({
                 lenient(true)
                 componentFilter(new Spec<ComponentIdentifier>() {
-                    @Override
-                    boolean isSatisfiedBy(ComponentIdentifier element) {
-                        return element instanceof ProjectComponentIdentifier
-                    }
+                    boolean isSatisfiedBy(ComponentIdentifier element) { return element instanceof ProjectComponentIdentifier }
                 })
             }).files)
             scalaCompile.dependsOn(scalaCompile.analysisFiles)
 
             // 目录与 kotlin 保持一致（原本下面要用到，但没用，已删）。
-            //scalaDirectorySet.destinationDirectory.convention(project.layout.buildDirectory.dir("tmp/scala-classes/${srcSetNameMatchVariant}"))
-            scalaCompile.destinationDirectory.convention(/*scalaDirectorySet.destinationDirectory*/ project.layout.buildDirectory.dir("tmp/scala-classes/${srcSetNameMatchVariant}"))
+            //scalaDirectorySet.destinationDirectory.convention(project.layout.buildDirectory.dir("tmp/scala-classes/${src$vaName}"))
+            scalaCompile.destinationDirectory.convention(/*scalaDirectorySet.destinationDirectory*/ project.layout.buildDirectory.dir("tmp/scala-classes/${src$vaName}"))
         }
     }
 
@@ -498,14 +548,27 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         }
     }
 
-    private void wireScalaTasks(Project project, ScalroidExtension scalroid, variant, TaskProvider scalaTask, TaskProvider javaTask, TaskProvider kotlinTask) {
+    private defaultSourceSet(Project project, variant) {
+        // 就是各个 variant 对应的 SourceSet。
+        // debugAndroidTest, debug, release
+        // githubDebugAndroidTest, googleplayDebugAndroidTest, githubDebug, googleplayDebug, githubRelease, googleplayRelease
+        return kotlinJvmAndroidCompilation(project, variant).defaultSourceSet
+    }
+
+    private kotlinAndroidTarget(Project project) {
         // 参见`org.jetbrains.kotlin.gradle.plugin.KotlinAndroidPlugin`开头的`(project.kotlinExtension as KotlinAndroidProjectExtension).target = it`
         // 根据源码分析，这里已不需要进行`.castIsolatedKotlinPluginClassLoaderAware()`，也没法直接调用（其目的
         // 是过早地发现错误并给出详细的建议，见`IsolatedKotlinClasspathClassCastException`）。
         final kotlinExtension = project.extensions.getByName(NAME_KOTLIN_EXTENSION) // KotlinAndroidProjectExtension_Decorated
-        final target = kotlinExtension.target // KotlinAndroidTarget
-        final compilation = target.compilations.getByName(variant.name) // KotlinJvmAndroidCompilation
+        return kotlinExtension.target // KotlinAndroidTarget
+    }
 
+    private kotlinJvmAndroidCompilation(Project project, variant) {
+        return kotlinAndroidTarget(project).compilations.getByName(variant.name) // KotlinJvmAndroidCompilation
+    }
+
+    private void wireScalaTasks(Project project, ScalroidExtension scalroid, variant, TaskProvider scalaTask, TaskProvider javaTask, TaskProvider kotlinTask) {
+        final compilation = kotlinJvmAndroidCompilation(project, variant)
         final outputs = compilation.output.classesDirs // ConfigurableFileCollection
         //LOGGER.info "$NAME_PLUGIN ---> [wireScalaTasks]outputs:${outputs.class}, it.files:${outputs.files}"
         outputs.from(scalaTask.flatMap { it.destinationDirectory })
@@ -626,11 +689,12 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         //    LOGGER.info ''
         //}
         project.configurations.named(configName).configure { Configuration config ->
-            LOGGER.info "$NAME_PLUGIN ---> configurations.name: ${config.name} -------- √"
+            LOGGER.warn "$NAME_PLUGIN ---> configurations.name:${config.name} -------- √"
             config.dependencies.each { Dependency dep -> //
-                LOGGER.info "    `${configName} ${dep.group}:${dep.name}:${dep.version}`"
+                LOGGER.warn "    `${configName} ${dep.group}:${dep.name}:${dep.version}`"
+                LOGGER.warn "     ${' ' * configName.length()} > ${dep} / ${dep.class}"
             }
-            LOGGER.info ''
+            LOGGER.warn ''
         }
     }
 
@@ -646,11 +710,22 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         return "compile${srcSetNameMatchVariant.capitalize()}Scala"
     }
 
-    private def genScalaClassesTaskName(srcSetNameMatchVariant) {
-        return "classes${srcSetNameMatchVariant.capitalize()}Scala"
-    }
-
     private def genMergeJavaResourceTaskName(srcSetNameMatchVariant) {
         return "merge${srcSetNameMatchVariant.capitalize()}JavaResource"
     }
+
+    /*private List<Project> findMainSubProject(Project project) {
+        // 无法拿到其它 subproject 的配置信息，时序问题：apply `com.android.application`的 project 还未开始配置。
+        LOGGER.info "$NAME_PLUGIN ---> [findMainSubProject]${project.rootProject} | name:${project.rootProject.name}, path:${project.rootProject.path}, version:${project.rootProject.version}"
+        final subPrs = []
+        project.rootProject.subprojects { proj ->
+            println proj
+            if (proj.plugins.findPlugin(ID_ANDROID_APP)) {
+                println "findPlugin $ID_ANDROID_APP"
+                subPrs.add(proj)
+            }
+        }
+        println subPrs
+        return subPrs
+    }*/
 }
