@@ -22,11 +22,13 @@ gradlePlugin {
     }
 }
 
-//repositories {
-//    mavenCentral()
-//}
+/*repositories {
+    google()
+    mavenCentral()
+}*/
 // 在预编译插件中使用外部插件，需要在此导入，然后在`src/main/groovy/a.b.c.xxx.gradle`文件
 // 中写`plugins { id 'com.bmuschko.docker-remote-api' }`。
-//dependencies {
-//    implementation 'com.bmuschko:gradle-docker-plugin:6.4.0'
-//}
+/*dependencies {
+    //implementation 'com.bmuschko:gradle-docker-plugin:6.4.0'
+    implementation 'com.android.tools.build:gradle:7.3.1'
+}*/
