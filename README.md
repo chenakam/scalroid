@@ -17,9 +17,12 @@ git clone git@github.com:chenakam/scalroid.git buildSrc
 /your_project
     /app
         /src
+            /main
+                /java     # Your java/kotlin code dir
+                /scala    # Your scala code dir (java files can also compile)
         /build.gradle
         /...
-    /buildSrc
+    /buildSrc             # This repo dir
     /other_modules
     /...
 ```
@@ -29,18 +32,20 @@ git clone git@github.com:chenakam/scalroid.git buildSrc
 ```groovy
 plugins {
     id 'com.android.application'
-    id 'org.jetbrains.kotlin.android'
-    // this plugin
+    // Alternatively, for your library subproject
+    //id 'com.android.library'
+
+    id 'org.jetbrains.kotlin.android' // Required
+
+    // This plugin
     id 'cash.bdo.scalroid'
 }
 
 android {
-    // optional settings
-    //scalroid.scala.zincVersion = '1.3.5'
     scalroid {
-        scala.zincVersion = '1.3.5'
-        message = 'Hi'
-        greeter = 'Gradle'
+//        scala.zincVersion.set('1.6.1')
+//        scalaCodeReferToKt = false
+//        ktCodeReferToScala = true
     }
     // ...
 }
@@ -63,6 +68,59 @@ dependencies {
 3. You can edit any code in `your_project/buildSrc/src` as needed, and then click the **button** with tooltip `Sync Project with Gradle Files` in the toolbar of
    your `Android Studio`, your modified code will be applied immediately.
 
+## Preferences
+
+* There are two parameters you can use conveniently, and they are:
+
+```groovy
+scalroid {
+    scalaCodeReferToKt = false // `false` by default
+    ktCodeReferToScala = true  // `true` by default
+}
+```
+
+The default value means **the kotlin code references scala code, but it cannot be back referenced** because of *scala-kotlin cross compilation* has not implemented. If
+this is the case, do nothing else, leave the defaults, and the project compiles. Or the opposite one-way reference works:
+
+```groovy
+scalroid {
+    // One-way reference works
+    scalaCodeReferToKt = false // `false` by default
+    ktCodeReferToScala = true  // `true` by default
+
+    // Alternatively:
+    // The opposite one-way reference also works too
+    scalaCodeReferToKt = true
+    ktCodeReferToScala = false
+}
+```
+
+But given the existence of such a situation of **scala/kotlin code tends to cross-reference**, I also made compatible reluctantly so that we can compile finally. It's
+theoretically set up like this (but the truth is not so simple):
+
+```groovy
+scalroid {
+    scalaCodeReferToKt = true
+    ktCodeReferToScala = true
+}
+```
+
+* If this is set, once you `clean` the project, you will got errors the next time you compile.
+
+The correct steps are (tentatively and reluctantly):
+
+1. `Clean` project (run `./gradlew clean`);
+2. Comment out any code in `scala` that references `kotlin` (or vice versa) and uniformize the two parameters setting to maintain a one-way reference (no need to
+   click `Sync`, which doesn't matter);
+3. Try compiling until you pass (`./gradlew :app:compile{VARIANT}JavaWithJavac`), `kotlin-classes` and `scala-classes` in `app/build/tmp/` have output associated
+   with `VARIANT`;
+4. Sets the two parameters both to `true` and **uncomment** any code commented out in Step 2;
+5. Try compiling until you pass.
+
+* Note: repeat these steps each time you `clean` your project.
+
+----
+
 ## Source Code Analysis
 
 1. In your `app/build.gradle` file, add dependencies as following:
@@ -75,7 +133,7 @@ repositories {
 
 dependencies {
     ////////// ////////// ////////// ////////// 便于看 android gradle 插件的源码 ////////// ////////// ////////// //////////
-    // 注意：implementation 的 version 字段要与 id 'xxx' 的 version 保持一致（这在项目根目录下的`build.gradle`）。
+    // 注意：compileOnly 的 version 字段要与 id 'xxx' 的 version 保持一致（这在项目根目录下的`build.gradle`）。
     // id 'com.android.application' version '7.3.1' apply false
     // id 'org.jetbrains.kotlin.android' version '1.7.20' apply false
 
@@ -87,9 +145,9 @@ dependencies {
     compileOnly 'org.gradle:gradle-core-api:6.1.1'
 
     // https://mvnrepository.com/artifact/com.android.tools.build/gradle
-    implementation 'com.android.tools.build:gradle:7.3.1'
-    implementation 'org.jetbrains.kotlin.android:org.jetbrains.kotlin.android.gradle.plugin:1.7.20'
-    implementation 'org.jetbrains.kotlin:kotlin-build-common:1.7.20'
+    compileOnly 'com.android.tools.build:gradle:7.3.1'
+    compileOnly 'org.jetbrains.kotlin.android:org.jetbrains.kotlin.android.gradle.plugin:1.7.20'
+    compileOnly 'org.jetbrains.kotlin:kotlin-build-common:1.7.20'
     ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
 }
 ```
