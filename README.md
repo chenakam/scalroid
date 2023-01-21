@@ -36,6 +36,8 @@ plugins {
     //id 'com.android.library'
 
     id 'org.jetbrains.kotlin.android' // Required
+    // or (abbr)
+    //id 'kotlin-android'
 
     // This plugin
     id 'cash.bdo.scalroid'
@@ -46,6 +48,7 @@ android {
 //        scala.zincVersion.set('1.6.1')
 //        scalaCodeReferToKt = false
 //        ktCodeReferToScala = true
+        javaDirsExcludes = ['/main/kotlin/']
     }
     // ...
 }
@@ -70,7 +73,34 @@ dependencies {
 
 ## Preferences
 
-* There are two parameters you can use conveniently, and they are:
+It's not that easy to get `scala` and `kotlin` code to compile together in one go. Especially when it comes to cross-referencing code. So, here are two options to help
+you compile through.
+
+#### _a. Leverage Java, is preferred_
+
+You can use Java as a transition, scala and kotlin both refer to java instead of directly referencing each other. At most, you can also use kotlin code to refer directly
+to scala (by default). That should do it.
+
+Don't forget the following **settings** if you put java source files in a non-default folder, e.g.`src/aaa/xxx`. The default folders are `src/main/java`
+and `src/main/kotlin` and do not need to be set.
+
+```groovy
+scalroid {
+    javaDirsExcludes = ['src/main/xxx', 'src/aaa/xxx']
+}
+```
+
+Note: `.java` (and `.scala`) files written in `src/main/scala` directory will be compiled and output by the scala compiler. `.java` files written in other directories
+will **NOT** be compiled and output by scala even if they are referenced by `.scala` files (which would be compiled for output by the java compiler). But if NOT
+configured in `javaDirsExcludes`, output is compiled by scala by default, which may results in duplicate `.class` files and an error is reported. If similar error occurs,
+try adding the directories to `javaDirsExcludes`.
+
+In other words, if you want scala to compile, you should written `.java` (and `.scala`) files in the `src/main/scala` directory (or other directories you configured
+in `sourceSets`), otherwise you should written them in the `java/kotlin` directories.
+
+#### _b. Cross-referencing is inevitable_
+
+There are two parameters you can use conveniently, and they are:
 
 ```groovy
 scalroid {
