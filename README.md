@@ -4,7 +4,7 @@ A `scala-kotlin-java` union compile `Gradle plugin`, for native Android.
 
 ## Usage
 
-1. Clone this repository to your project's `buildSrc` directory:
+1. Clone this repository to your project's `buildSrc` directory (**optional**):
 
 ```bash
 cd <PATH/TO/YOUR_PROJECT>
@@ -28,6 +28,8 @@ git clone git@github.com:chenakam/scalroid.git buildSrc
 ```
 
 2. Add `apply plugin: 'cash.bdo.scalroid'` to your `app/build.gradle` file:
+
+* See https://plugins.gradle.org/plugin/cash.bdo.scalroid if _**Step 1**_ was not done.
 
 ```groovy
 plugins {
