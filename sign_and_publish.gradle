@@ -1,0 +1,56 @@
+// Gradle plugin publish.
+// https://plugins.gradle.org/docs/publish-plugin
+//plugins {  id 'com.gradle.plugin-publish' version '1.1.0' }
+
+// https://docs.gradle.org/current/userguide/signing_plugin.html
+apply plugin: 'signing'
+
+group = 'cash.bdo.dev'
+version = '1.0-SNAPSHOT'
+
+ext.isReleaseVersion = !version.endsWith("SNAPSHOT")
+
+gradlePlugin {
+    // https://docs.gradle.org/current/userguide/publishing_gradle_plugins.html
+    website = 'https://github.com/chenakam/scalroid'
+    vcsUrl = 'https://github.com/chenakam/scalroid.git'
+
+    plugins {
+        // 这个名字可以随便起（和`build.gradle`中应相同，否则 id 不能一样），下面的`signing {}`会用到。
+        scalroid {
+            id = 'cash.bdo.scalroid'
+            //implementationClass = 'cash.bdo.ScalaAndroidCompatPlugin'
+
+            displayName = 'A scala-supported plugin for android'
+            description = 'A scala-kotlin-java union compile Gradle plugin, for native Android.'
+            tags.set(['android', 'scala', 'kotlin', 'java', 'union', 'compile', 'compatibility'])
+        }
+    }
+}
+
+// 执行`../gradlew publishPlugins`
+signing {
+    required { isReleaseVersion && gradle.taskGraph.hasTask('publish') }
+
+//    def signingKeyId = findProperty("signingKeyId")
+//    def signingKey = findProperty("signingKey")
+//    def signingPassword = findProperty("signingPassword")
+//    useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
+
+    // 调用系统的 GPG 工具（不用上面的配置）：
+    // https://docs.gradle.org/current/userguide/signing_plugin.html#sec:using_gpg_agent
+    useGpgCmd()
+    sign publishing.publications.matching { // org.gradle.api.publish.maven.internal.publication.DefaultMavenPublication it ->
+        //println it.name
+        it.name.startsWith 'scalroid'
+    }
+}
+
+publishing {
+    repositories {
+        maven {
+            name = 'localPluginRepo'
+            url = '../local-plugin-repository'
+        }
+    }
+}

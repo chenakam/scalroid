@@ -9,13 +9,21 @@ plugins {
     // 该插件 ID 取`src/main/groovy/`目录下的`a.b.c.xxx.gradle`。
     //id 'java-gradle-plugin'
     id 'groovy-gradle-plugin'
+
+    // Gradle plugin publish.
+    // https://plugins.gradle.org/docs/publish-plugin
+    id 'com.gradle.plugin-publish' version '1.1.0'
+    //id 'signing'
 }
+
+apply from: 'sign_and_publish.gradle'
 
 // 如下配在可省略，如果存在`a.b.c.xxx.gradle`。
 // 如果同时存在`a.b.c.xxx.gradle`，则同时会生成以`a.b.c.xxx`为 ID 的插件。
 gradlePlugin {
     plugins {
-        simplePlugin {
+        // 这个名字可以随便起
+        scalroid {
             id = 'cash.bdo.scalroid'
             implementationClass = 'cash.bdo.ScalaAndroidCompatPlugin'
         }
