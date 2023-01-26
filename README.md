@@ -64,7 +64,7 @@ dependencies {
     // `scala-library` must be set. Scala 2 or Scala 3
 
     // Scala 2
-    implementation "org.scala-lang:scala-library:2.11.12"
+    implementation "org.scala-lang:scala-library:2.12.17"
     // Scala 3
 //    implementation 'org.scala-lang:scala3-library_3:3.2.0-RC2'
 }
@@ -150,64 +150,3 @@ The correct steps are (tentatively and reluctantly):
 5. Try compiling until you pass.
 
 * Note: repeat these steps each time you `clean` your project.
-
-----
-
-## Source Code Analysis
-
-1. In your `app/build.gradle` file, add dependencies as following:
-
-```groovy
-repositories {
-    // ...
-    maven { url 'https://repo.gradle.org/gradle/libs-releases-local' }
-}
-
-dependencies {
-    ////////// ////////// ////////// ////////// 便于看 android gradle 插件的源码 ////////// ////////// ////////// //////////
-    // 注意：compileOnly 的 version 字段要与 id 'xxx' 的 version 保持一致（这在项目根目录下的`build.gradle`）。
-    // id 'com.android.application' version '7.3.1' apply false
-    // id 'org.jetbrains.kotlin.android' version '1.7.20' apply false
-
-    // 这行不需要，External Libraries 下第一个就是`gradle-api-xxx.jar`。
-    //implementation gradleApi()
-
-    // 为了能够从 android gradle 插件的源码中链接到这些依赖。不过只更新到 6.1.1 了，原因不详。
-    // https://repo.gradle.org/gradle/libs-releases-local/org/gradle/gradle-core-api/6.1.1/
-    compileOnly 'org.gradle:gradle-core-api:6.1.1'
-
-    // https://mvnrepository.com/artifact/com.android.tools.build/gradle
-    compileOnly 'com.android.tools.build:gradle:7.3.1'
-    compileOnly 'org.jetbrains.kotlin.android:org.jetbrains.kotlin.android.gradle.plugin:1.7.20'
-    compileOnly 'org.jetbrains.kotlin:kotlin-build-common:1.7.20'
-    ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
-}
-```
-
-2. Key Points
-
-```java
-// 关键源代码：
-// org.jetbrains.kotlin.gradle.plugin.KotlinAndroidPlugin ->
-//   .apply() ->
-//   .dynamicallyApplyWhenAndroidPluginIsApplied() ->
-//   [companion object]
-//   androidTargetHandler().configureTarget(target)
-//
-// org.jetbrains.kotlin.gradle.plugin.AbstractAndroidProjectHandler ->
-//   .configureTarget() ->
-//   .postprocessVariant() ->
-//   .wireKotlinTasks() ->
-// org.jetbrains.kotlin.gradle.plugin.Android25ProjectHandler ->
-//   .wireKotlinTasks() ->
-//   project.files(xxx).builtBy(kotlinTask)
-//
-// kotlin 使用的 SourceSet：
-// org.jetbrains.kotlin.gradle.model.SourceSet
-// 不同于默认的 org.gradle.api.tasks.SourceSet
-// 但 Android 项目的 kotlin 也不是上述之一，而是一个目录集：
-// com.android.build.api.dsl.AndroidSourceSet ->
-//   kotlin: com.android.build.api.dsl.AndroidSourceDirectorySet
-// org.jetbrains.kotlin.gradle.plugin.mpp.SyncKotlinAndAndroidSourceSetsKt ->
-//   internal fun AndroidSourceSet.addKotlinSources(kotlinSourceSet: KotlinSourceSet)
-```
