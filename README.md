@@ -64,7 +64,7 @@ dependencies {
     // `scala-library` must be set. Scala 2 or Scala 3
 
     // Scala 2
-    implementation "org.scala-lang:scala-library:2.11.12"
+    implementation "org.scala-lang:scala-library:2.12.17"
     // Scala 3
 //    implementation 'org.scala-lang:scala3-library_3:3.2.0-RC2'
 }

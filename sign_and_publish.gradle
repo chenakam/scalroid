@@ -6,9 +6,9 @@
 apply plugin: 'signing'
 
 group = 'cash.bdo.dev'
-version = '1.0-SNAPSHOT'
+version = '1.0-SNAPSHOT' //'0.4-test'
 
-ext.isReleaseVersion = !version.endsWith("SNAPSHOT")
+ext.isReleaseVersion = !version.endsWith('SNAPSHOT')
 
 gradlePlugin {
     // https://docs.gradle.org/current/userguide/publishing_gradle_plugins.html
@@ -48,6 +48,8 @@ signing {
 
 publishing {
     repositories {
+        // 暂未配置完整（先不管了）：
+        // https://docs.gradle.org/current/userguide/publishing_gradle_plugins.html#custom-plugin-repositories
         maven {
             name = 'localPluginRepo'
             url = '../local-plugin-repository'
