@@ -53,13 +53,13 @@ import org.gradle.api.tasks.scala.ScalaDoc
 import org.gradle.api.tasks.util.PatternSet
 import org.gradle.internal.Factory
 
+import javax.annotation.Nullable
 import javax.inject.Inject
 import java.util.concurrent.Callable
 
 import static org.gradle.api.attributes.Category.CATEGORY_ATTRIBUTE
 import static org.gradle.api.attributes.Category.LIBRARY
-import static org.gradle.api.attributes.Usage.JAVA_RUNTIME
-import static org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE
+import static org.gradle.api.attributes.Usage.*
 import static org.gradle.api.internal.lambdas.SerializableLambdas.spec
 
 interface ScalroidExtension {
@@ -112,8 +112,12 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
     static final main = 'main'
     static final test = 'test'
     static final androidTest = 'androidTest'
+    static final debug = 'debug'
+    static final release = 'release'
 
     private boolean isCheckArgsWarningShowed = false
+    private boolean isLibAttrSets_debug = false
+    private boolean isLibAttrSets_release = false
 
     private void checkArgsProbablyWarning(ScalroidExtension ext) {
         if (isCheckArgsWarningShowed) return
@@ -412,7 +416,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         return true
     }
 
-    private void configureScalaCompile(Project project, variant, sourceSet, mainSourceSet, androidExtension, String src$vaName, boolean isLibrary, boolean isTest) {
+    private void configureScalaCompile(Project project, @Nullable variant, sourceSet, mainSourceSet, androidExtension, String src$vaName, boolean isLibrary, boolean isTest) {
         final ScalaSourceDirectorySet scalaDirectorySet = sourceSet.extensions.getByType(ScalaSourceDirectorySet)
         Configuration classpathBySourceSetImpl = project.configurations.getByName(sourceSet.implementationConfigurationName)
         //printConfiguration(project, sourceSet.implementationConfigurationName)
@@ -468,21 +472,32 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             // 如有问题请参见：
             // https://docs.gradle.org/current/userguide/variant_attributes.html
             // https://docs.gradle.org/current/userguide/variant_model.html#sec:variant-aware-matching
-            if (!isLibrary) {
-                // USAGE_ATTRIBUTE 可用 JAVA_API 或 JAVA_RUNTIME，前者包含后者。用 JAVA_API 有 4 个冲突（4 选一），用 JAVA_RUNTIME 二选一即可（现在 ok 了两个都行）。
-                // 但是 fix `isTest` 的 bug 后，只能用 JAVA_RUNTIME。
-                compilerClasspath.attributes.attribute(USAGE_ATTRIBUTE, factory.named(Usage, JAVA_RUNTIME))
+            boolean shouldSetAttr = false
+            if (!isLibrary || isTest) shouldSetAttr = true else {
+                if (!isLibAttrSets_debug && (src$vaName == debug || src$vaName.endsWith(debug.capitalize()))) {
+                    shouldSetAttr = true; isLibAttrSets_debug = true
+                } else if (!isLibAttrSets_release && (src$vaName == release || src$vaName.endsWith(release.capitalize()))) {
+                    shouldSetAttr = true; isLibAttrSets_release = true
+                }
+            }
+            if (shouldSetAttr) {
+                compilerClasspath.attributes.attribute(USAGE_ATTRIBUTE, factory.named(Usage, isLibrary ? JAVA_API : JAVA_RUNTIME))
                 compilerClasspath.attributes.attribute(CATEGORY_ATTRIBUTE, factory.named(Category, LIBRARY))
-                // com.android.build.gradle.internal.publishing.AndroidArtifacts.ArtifactType.CLASSES_JAR.type
                 final artifactType = ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE
-                compilerClasspath.attributes.attribute(artifactType, 'android-classes-jar')
+                // 只是找个区别，使 Gradle Sync 通过（无错，并完好运行）。
+                // com.android.build.gradle.internal.publishing.AndroidArtifacts.ArtifactType.CLASSES_JAR.type/AAR_OR_JAR.type
+                if (isTest) compilerClasspath.attributes.attribute(artifactType, 'android-classes-jar') // CLASSES_JAR.type
+                else compilerClasspath.attributes.attribute(artifactType, 'android-aar-or-jar') // AAR_OR_JAR.type
 
-                //final apiElements = project.configurations.findByName("${src$vaName}ApiElements")
+                final apiElements = project.configurations.findByName("${isTest ? parseMainVariantNameForTest(src$vaName) : src$vaName}ApiElements")
                 final runtimeElements = project.configurations.findByName("${isTest ? parseMainVariantNameForTest(src$vaName) : src$vaName}RuntimeElements")
-                if (runtimeElements) {
+                final element = isLibrary ? apiElements : runtimeElements // 与`isLibrary ? JAVA_API : JAVA_RUNTIME`保持一致
+                if (element) {
                     final List forceAttrs = ['.attributes.BuildType', 'org.gradle.usage', 'org.gradle.category', '.jvm.environment', '.platform.type']
                     //                         debug/release,          java-runtime,       library,                android,            androidJvm
-                    runtimeElements.attributes.each { attrs ->
+                    final attrVariant = '.attributes.Variant' // debug/release/githubDebug/xxxRelease
+                    final List libraryAttrs = [attrVariant]
+                    element.attributes.each { attrs ->
                         attrs.keySet().each { attr ->
                             final value = attrs.getAttribute(attr)
                             LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]attribute > ${attr.name} -> ${value} / ${value.class}"
@@ -492,15 +507,10 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                                 //else LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]configuring `$compilerClasspathName`, old attribute value fund: ${valueOld}."
                             } else if (forceAttrs.any { attr.name.contains(it) }) {
                                 LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]accept > ${attr.name} -> ${value}"
-                                /*if (attr.name.contains('.attributes.Variant')) {
-                                    final debug = 'debug'
-                                    final release = 'release'
-                                    final attrClass = Class.forName(attr.name, true, compilation.class.classLoader)
-                                    final valueAdj = [debug, debug.capitalize()].any { src$vaName.contains(it) } ? debug : release
-                                    compilerClasspath.attributes.attribute(attr, factory.named(attrClass, valueAdj))
-                                } else {*/
                                 compilerClasspath.attributes.attribute(attr, value)
-                                //}
+                            } else if (isLibrary && libraryAttrs.any { attr.name.contains(it) }) {
+                                LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]accept > ${attr.name} -> ${value} | LIBRARY"
+                                compilerClasspath.attributes.attribute(attr, value)
                             }
                         }
                     }
@@ -556,6 +566,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 // Unexpected javac output: 警告: [options] 未与 -source 8 一起设置引导类路径
                 scalaCompile.options.bootstrapClasspath = javaCompile.options.bootstrapClasspath
                 scalaCompile.options.encoding = javaCompile.options.encoding
+                // scalaCompile.scalaCompileOptions 可以在`build.gradle`脚本中配置
                 //scalaCompile.scalaCompileOptions.encoding = scalaCompile.options.encoding
 
                 final processRes = project.tasks.findByName(processResourcesTaskName)
