@@ -549,7 +549,8 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         final kotlinTaskName = genKotlinCompileTaskName(variant.name)
         final buildConfigTaskName = genBuildConfigTaskName(variant.name)
         final processResourcesTaskName = genProcessResourcesTaskName(variant.name)
-        final genRFileTaskName = genRFileTaskName(variant.name)
+        final rFileTaskName = genRFileTaskName(variant.name)
+        final dataBindingGenBaseTaskName = genDataBindingGenBaseTaskName(variant.name)
 
         final JavaCompile javaCompile = project.tasks.findByName(javaTaskName)
         if (javaCompile) {
@@ -570,7 +571,8 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 //scalaCompile.scalaCompileOptions.encoding = scalaCompile.options.encoding
 
                 final processRes = project.tasks.findByName(processResourcesTaskName)
-                final rFile = project.tasks.findByName(genRFileTaskName)
+                final rFile = project.tasks.findByName(rFileTaskName)
+                final dataBinding = project.tasks.findByName(dataBindingGenBaseTaskName)
                 if (processRes) {
                     scalaCompile.dependsOn processRes
                     scalaCompile.classpath += project.files(processRes.outputs.files.find { it.path.endsWith("${variant.name}/R.jar") })
@@ -582,6 +584,10 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 project.tasks.getByName(buildConfigTaskName) { Task buildConfig -> // ...
                     scalaCompile.source(buildConfig)
                     evictCompileOutputForSrcTask(project, scalaCompile, buildConfig, scalroid, 'src/main/java/', 'src/main/kotlin/')
+                }
+                if (dataBinding) {
+                    scalaCompile.source(dataBinding.outputs.files.filter { it.path.contains("/generated/") && it.path.contains("/${variant.name}/") })
+                    evictCompileOutputForSrcTask(project, scalaCompile, dataBinding, null /*置为 null，避免重复计算。*/)
                 }
 
                 final kotlinCompile = project.tasks.findByName(kotlinTaskName)
@@ -608,7 +614,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         }
     }
 
-    private void evictCompileOutputForSrcTask(Project project, AbstractCompile dest, Task src, ScalroidExtension scalroid, String... srcDirs) {
+    private void evictCompileOutputForSrcTask(Project project, AbstractCompile dest, Task src, @Nullable ScalroidExtension scalroid, String... srcDirs) {
         // 无法创建针对输出的过滤器（而输入默认携带`task.exclude()`），试过所以方法（包括搜索文档）。因为`task.outputs.xxx`基本都是不可变的，意味着
         // 调用某的方法仅返回一个值，无法设置进去从而起作用。
         //PatternFilterable patternFilter = patternSetFactory.create()
@@ -633,10 +639,11 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                         if (temp[j].startsWith(temp[i])) parentPaths.remove(temp[j])
                     }
                 }
+                // 通过上述算法，`parentPaths`已经剩下每个不同目录的最短`目录的 path`。
                 parentPaths.each { path -> parentPathToLens.put(path, path.length() + (path.endsWith('/') ? 0 : 1)) }
                 LOG.info "$NAME_PLUGIN ---> [evictCompileOutputForSrcTask]parentPathToLens:${parentPathToLens}"
             }
-            final tempDirs = []; tempDirs.addAll(scalroid.javaDirsExcludes.get()); tempDirs.addAll(srcDirs)
+            final tempDirs = []; if (scalroid) tempDirs.addAll(scalroid.javaDirsExcludes.get()); tempDirs.addAll(srcDirs)
             excludePaths.addAll(tempDirs.collect { it.endsWith('/') ? it : (it + '/') }.toSet().toList())
             LOG.info "$NAME_PLUGIN ---> [evictCompileOutputForSrcTask]excludePaths:${excludePaths}"
         }
@@ -859,6 +866,10 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
 
     private String genRFileTaskName(String srcSetNameMatchVariant) {
         return "generate${srcSetNameMatchVariant.capitalize()}RFile"
+    }
+
+    private String genDataBindingGenBaseTaskName(String srcSetNameMatchVariant) {
+        return "dataBindingGenBaseClasses${srcSetNameMatchVariant.capitalize()}"
     }
 
     private String parseMainVariantNameForTest(String name) {
