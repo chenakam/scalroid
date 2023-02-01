@@ -2,6 +2,8 @@
 
 A `scala-kotlin-java` union compile `Gradle plugin`, for native Android.
 
+* Also refers demo project [scalroid-build-demo](https://github.com/chenakam/scalroid-build-demo)
+
 ## Usage
 
 1. Clone this repository to your project's `buildSrc` directory (**optional**):
