@@ -26,7 +26,6 @@ import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.component.ComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.artifacts.type.ArtifactTypeDefinition
-import org.gradle.api.attributes.Category
 import org.gradle.api.attributes.Usage
 import org.gradle.api.component.SoftwareComponentFactory
 import org.gradle.api.file.FileCollection
@@ -57,9 +56,7 @@ import javax.annotation.Nullable
 import javax.inject.Inject
 import java.util.concurrent.Callable
 
-import static org.gradle.api.attributes.Category.CATEGORY_ATTRIBUTE
-import static org.gradle.api.attributes.Category.LIBRARY
-import static org.gradle.api.attributes.Usage.*
+import static org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE
 import static org.gradle.api.internal.lambdas.SerializableLambdas.spec
 
 interface ScalroidExtension {
@@ -116,8 +113,6 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
     static final release = 'release'
 
     private boolean isCheckArgsWarningShowed = false
-    private boolean isLibAttrSets_debug = false
-    private boolean isLibAttrSets_release = false
 
     private void checkArgsProbablyWarning(ScalroidExtension ext) {
         if (isCheckArgsWarningShowed) return
@@ -452,10 +447,9 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         project.tasks.register(genScalaCompileTaskName(src$vaName), ScalaCompile) { ScalaCompile scalaCompile ->
             LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]compileTaskName:${scalaCompile.name}, variant:${variant ? variant.name : null}, isLibrary:$isLibrary, isTest:$isTest"
 
-            final compilerClasspathName = "${src$vaName}ScalaCompileClasspath"
-            final compilerClasspath = project.configurations.create(compilerClasspathName).setExtendsFrom(classpathConfigs)
+            final compilerClasspath = project.configurations.create("${src$vaName}ScalaCompileClasspath").setExtendsFrom(classpathConfigs)
 
-            scalaCompile.classpath = compilerClasspath
+            scalaCompile.classpath = obtainWithSetsOnlyCanBeResolvedVariantSelectionAttributes(project, scalaCompile, compilerClasspath, src$vaName, isTest)
             // TODO: 实测要把`android.jar`也加入 classpath，否则如果 scala 代码间接（或直接）引用如`android.app.Activity`，会报如下错误：
             // [Error] /Users/.../demo-material-3/app/src/main/scala/com/example/demomaterial3/Test2.scala:9:7: Class android.app.Activity not found - continuing with a stub. one error found...
             scalaCompile.classpath += androidExtension.bootClasspathConfig.mockableJarArtifact // mock `android.jar`
@@ -469,53 +463,6 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             if (!isTest && mainScalaDirSet) scalaCompile.source(mainScalaDirSet)
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
 
-            // 如有问题请参见：
-            // https://docs.gradle.org/current/userguide/variant_attributes.html
-            // https://docs.gradle.org/current/userguide/variant_model.html#sec:variant-aware-matching
-            boolean shouldSetAttr = false
-            if (!isLibrary || isTest) shouldSetAttr = true else {
-                if (!isLibAttrSets_debug && (src$vaName == debug || src$vaName.endsWith(debug.capitalize()))) {
-                    shouldSetAttr = true; isLibAttrSets_debug = true
-                } else if (!isLibAttrSets_release && (src$vaName == release || src$vaName.endsWith(release.capitalize()))) {
-                    shouldSetAttr = true; isLibAttrSets_release = true
-                }
-            }
-            if (shouldSetAttr) {
-                compilerClasspath.attributes.attribute(USAGE_ATTRIBUTE, factory.named(Usage, isLibrary ? JAVA_API : JAVA_RUNTIME))
-                compilerClasspath.attributes.attribute(CATEGORY_ATTRIBUTE, factory.named(Category, LIBRARY))
-                final artifactType = ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE
-                // 只是找个区别，使 Gradle Sync 通过（无错，并完好运行）。
-                // com.android.build.gradle.internal.publishing.AndroidArtifacts.ArtifactType.CLASSES_JAR.type/AAR_OR_JAR.type
-                if (isTest) compilerClasspath.attributes.attribute(artifactType, 'android-classes-jar') // CLASSES_JAR.type
-                else compilerClasspath.attributes.attribute(artifactType, 'android-aar-or-jar') // AAR_OR_JAR.type
-
-                final apiElements = project.configurations.findByName("${isTest ? parseMainVariantNameForTest(src$vaName) : src$vaName}ApiElements")
-                final runtimeElements = project.configurations.findByName("${isTest ? parseMainVariantNameForTest(src$vaName) : src$vaName}RuntimeElements")
-                final element = isLibrary ? apiElements : runtimeElements // 与`isLibrary ? JAVA_API : JAVA_RUNTIME`保持一致
-                if (element) {
-                    final List forceAttrs = ['.attributes.BuildType', 'org.gradle.usage', 'org.gradle.category', '.jvm.environment', '.platform.type']
-                    //                         debug/release,          java-runtime,       library,                android,            androidJvm
-                    final attrVariant = '.attributes.Variant' // debug/release/githubDebug/xxxRelease
-                    final List libraryAttrs = [attrVariant]
-                    element.attributes.each { attrs ->
-                        attrs.keySet().each { attr ->
-                            final value = attrs.getAttribute(attr)
-                            LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]attribute > ${attr.name} -> ${value} / ${value.class}"
-                            if (compilerClasspath.attributes.contains(attr)) {
-                                //final valueOld = compilerClasspath.attributes.getAttribute(attr)
-                                //if (value == valueOld) LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]configuring `$compilerClasspathName`, SAME old attribute value."
-                                //else LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]configuring `$compilerClasspathName`, old attribute value fund: ${valueOld}."
-                            } else if (forceAttrs.any { attr.name.contains(it) }) {
-                                LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]accept > ${attr.name} -> ${value}"
-                                compilerClasspath.attributes.attribute(attr, value)
-                            } else if (isLibrary && libraryAttrs.any { attr.name.contains(it) }) {
-                                LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]accept > ${attr.name} -> ${value} | LIBRARY"
-                                compilerClasspath.attributes.attribute(attr, value)
-                            }
-                        }
-                    }
-                }
-            }
             scalaCompile.description = "Compiles the ${scalaDirectorySet}."
             //scalaCompile.javaLauncher.convention(getToolchainTool(project, JavaToolchainService::launcherFor))
             scalaCompile.analysisMappingFile.set(project.layout.buildDirectory.file("scala/compilerAnalysis/${scalaCompile.name}.mapping"))
@@ -525,18 +472,117 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             incrementalOptions.analysisFile.set(project.layout.buildDirectory.file("scala/compilerAnalysis/${scalaCompile.name}.analysis"))
             incrementalOptions.classfileBackupDir.set(project.layout.buildDirectory.file("scala/classfileBackup/${scalaCompile.name}.bak"))
 
-            scalaCompile.analysisFiles.from(incrementalAnalysis.incoming.artifactView({
+            scalaCompile.analysisFiles.from(incrementalAnalysis.incoming.artifactView {
                 lenient(true)
                 componentFilter(new Spec<ComponentIdentifier>() {
                     boolean isSatisfiedBy(ComponentIdentifier element) { return element instanceof ProjectComponentIdentifier }
                 })
-            }).files)
+            }.files)
             scalaCompile.dependsOn(scalaCompile.analysisFiles)
 
             // 目录与 kotlin 保持一致（原本下面要用到，但没用，已删）。
             //scalaDirectorySet.destinationDirectory.convention(project.layout.buildDirectory.dir("tmp/scala-classes/${src$vaName}"))
             scalaCompile.destinationDirectory.convention(/*scalaDirectorySet.destinationDirectory*/ project.layout.buildDirectory.dir("tmp/scala-classes/${src$vaName}"))
         }
+    }
+
+    private Configuration obtainWithSetsOnlyCanBeResolvedVariantSelectionAttributes(Project project, Task scalaCompile, Configuration compilerClasspath, String src$vaName, boolean isTest) {
+        //printClasspathOnTaskDoFirst(project, scalaCompile, compilerClasspath, src$vaName, null)
+
+        // 详情参见：
+        // https://docs.gradle.org/current/userguide/variant_model.html#sec:variant-visual
+        // https://docs.gradle.org/current/userguide/variant_attributes.html#sec:abm_algorithm
+        // 之前卡了几周的问题在这：
+        // https://docs.gradle.org/current/userguide/declaring_dependencies.html#sec:resolvable-consumable-configs
+        // https://docs.gradle.org/current/userguide/variant_attributes.html#sec:abm_disambiguation_rules
+        // 由于一直不知道这两个属性起什么作用，从而被忽略。但默认值均为 true，导致：
+        // 1. 既可以解析依赖（即 consumer 角色，根据设置的 attributes 选择依赖的 variant）；
+        // 2. 又可以被消化，也就是候选者（candidate）。
+        // 由于下面设置的 attributes 无法区分上游的被依赖者是哪个 project，所以会总是设置了兼容的 attributes 从而
+        // 被上游错误地解析到。所以要么出现歧义（disambiguation），要么编译时出现错误。歧义问题表现在依赖的 sub-project，在
+        //     api project(path: ':annoid', configuration: 'debugRuntimeElements')
+        // 配置中，configuration 通常不设置，即
+        //     api project(':annoid')
+        // 默认就是`default`，等同于
+        //     api project(path: ':annoid', configuration: 'default')
+        // 就会报错。解决方法及其简单：
+        compilerClasspath.canBeResolved = true
+        compilerClasspath.canBeConsumed = false
+        /*
+        // 运行`./gradlew :annoid:outgoingVariants`可以看到：
+        //   （`./gradlew :assoid:resolvableConfigurations`）
+
+        > Task :annoid:outgoingVariants
+        --------------------------------------------------
+        Variant debugApiElements  // 有很多
+        --------------------------------------------------
+        API elements for debug
+
+        Capabilities
+            - hobby.wei.c.anno:annoid:1.2.1 (default capability)
+        Attributes
+            - com.android.build.api.attributes.AgpVersionAttr          = 7.4.0
+            - com.android.build.api.attributes.BuildTypeAttr           = debug
+            - com.android.build.gradle.internal.attributes.VariantAttr = debug
+            - org.gradle.category                                      = library
+            - org.gradle.jvm.environment                               = android
+            - org.gradle.usage                                         = java-api
+            - org.jetbrains.kotlin.platform.type                       = androidJvm
+
+        Secondary Variants (*)
+
+        --------------------------------------------------
+        Secondary Variant android-aidl
+        --------------------------------------------------
+        ...
+
+        --------------------------------------------------
+        Secondary Variant android-classes-jar
+        --------------------------------------------------
+        Attributes
+            - ...
+        Artifacts
+            - build/intermediates/compile_library_classes_jar/debug/classes.jar (artifactType = android-classes-jar)
+        */
+        // TODO:
+        //  这里只需要把重点区别标识出来，也就是 Secondary Variants，有很多。这里需要的是
+        //  `artifactType = android-classes-jar`，还要个
+        //  `com.android.build.api.attributes.BuildTypeAttr = debug/release`
+        //  即可。
+
+        //final attrUsage = 'org.gradle.usage' // java-runtime/java-api
+        //final attrCategory = 'org.gradle.category' // library
+        //final attrJvmEnv = '.jvm.environment' // android
+        //final attrPlatType = '.platform.type' // androidJvm
+        final attrBuildType = '.attributes.BuildType' // debug/release
+        //final attrVariant = '.attributes.Variant' // debug/release/xxxDebug/xxxRelease
+        //final attrAgpVersion = '.attributes.AgpVersion' // 7.4.0
+        //final attrLibElements = LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE // 'org.gradle.libraryelements' // classes
+        final List forceAttrs = [attrBuildType] //attrUsage, attrCategory, attrJvmEnv, attrPlatType]
+
+        final CLASSES_JAR = 'android-classes-jar'
+        final artifactType = ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE
+        //compilerClasspath.attributes.attribute(USAGE_ATTRIBUTE, factory.named(Usage, JAVA_RUNTIME))
+        //compilerClasspath.attributes.attribute(CATEGORY_ATTRIBUTE, factory.named(Category, LIBRARY))
+        // com.android.build.gradle.internal.publishing.AndroidArtifacts.ArtifactType.CLASSES_JAR.type/AAR_OR_JAR.type
+        compilerClasspath.attributes.attribute(artifactType, CLASSES_JAR)
+
+        //final isDebug = [debug, debug.capitalize()].any { src$vaName.contains(it) }
+        final apiElements = project.configurations.findByName("${isTest ? parseMainVariantNameForTest(src$vaName) : src$vaName}ApiElements")
+        final runtimeElements = project.configurations.findByName("${isTest ? parseMainVariantNameForTest(src$vaName) : src$vaName}RuntimeElements")
+        final elements = runtimeElements ? runtimeElements : apiElements
+        //src$vaName == main 时，elements = null
+        if (elements) elements.attributes.each { attrs ->
+            attrs.keySet().each { attr ->
+                final value = attrs.getAttribute(attr)
+                LOG.info "$NAME_PLUGIN ---> [setClasspathAttributes]attribute > ${attr.name} -> ${value} / ${value.class}"
+                if (forceAttrs.any { attr.name.contains(it) }) {
+                    LOG.info "$NAME_PLUGIN ---> [setClasspathAttributes]accept > ${attr.name} -> ${value}"
+                    compilerClasspath.attributes.attribute(attr, value)
+                }
+            }
+        }
+        return compilerClasspath
     }
 
     private void linkScalaCompileDependsOn(Project project, ScalroidExtension scalroid, Plugin androidPlugin, androidExtension, File workDir, variant, sourceSet, boolean isLibrary, boolean isTest) {
@@ -822,24 +868,6 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         }
     }
 
-    private void printConfiguration(Project project, configName) {
-        //project.configurations.all { Configuration config ->
-        //    LOG.info "$NAME_PLUGIN ---> configurations.name: ${config.name} -------- √√√"
-        //    config.getDependencies().each { Dependency dep -> //
-        //        LOG.info "    configurations.dependencies: ${dep.group}:${dep.name}:${dep.version}"
-        //    }
-        //    LOG.info ''
-        //}
-        project.configurations.named(configName).configure { Configuration config ->
-            LOG.warn "$NAME_PLUGIN ---> configurations.name:${config.name} -------- √"
-            config.dependencies.each { Dependency dep -> //
-                LOG.warn "    `${configName} ${dep.group}:${dep.name}:${dep.version}`"
-                LOG.warn "     ${' ' * configName.length()} > ${dep} / ${dep.class}"
-            }
-            LOG.warn ''
-        }
-    }
-
     private String genJavaCompileTaskName(String srcSetNameMatchVariant) {
         return "compile${srcSetNameMatchVariant.capitalize()}JavaWithJavac"
     }
@@ -903,11 +931,6 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         return isTest
     }
 
-    // TODO: 移到合适的位置
-    // > Task :app:compileGithubDebugAndroidTestJavaWithJavac FAILED
-    // /Users/weichou/git/bdo.cash/demo-material-3/app/build/generated/source/buildConfig/androidTest/github/debug/com/example/demomaterial3/test/BuildConfig.java:4: 错误: 程序包com.example.demomaterial3.test与带有相同名称的类冲突
-    // package com.example.demomaterial3.test;
-
     private String adjustSourceSetNameToMatchVariant(String sourceSetName, Set<String> variantsNames) {
         String srcSetNameMatchVariant = sourceSetName
         if (srcSetNameMatchVariant != main) {
@@ -931,6 +954,44 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         return srcSetNameMatchVariant
     }
 
+    private void printConfiguration(Project project, configName) {
+        //project.configurations.all { Configuration config ->
+        //    LOG.info "$NAME_PLUGIN ---> configurations.name: ${config.name} -------- √√√"
+        //    config.getDependencies().each { Dependency dep -> //
+        //        LOG.info "    configurations.dependencies: ${dep.group}:${dep.name}:${dep.version}"
+        //    }
+        //    LOG.info ''
+        //}
+        project.configurations.named(configName).configure { Configuration config ->
+            LOG.warn "$NAME_PLUGIN ---> configurations.name:${config.name} -------- √"
+            config.dependencies.each { Dependency dep -> //
+                LOG.warn "    `${configName} ${dep.group}:${dep.name}:${dep.version}`"
+                LOG.warn "     ${' ' * configName.length()} > ${dep} / ${dep.class}"
+            }
+            LOG.warn ''
+        }
+    }
+
+    private void printClasspathOnTaskDoFirst(Project project, Task task, Configuration classpathConfig, @Nullable String src$vaName, @Nullable String projNameOnly) {
+        task.doFirst {
+            try {
+                if (!projNameOnly || project.name == projNameOnly) {
+                    LOG.warn "$NAME_PLUGIN ---> [printClasspath]project:${project.name}, variant:${src$vaName}"
+                    LOG.warn "$NAME_PLUGIN ---> [printClasspath]project.parent:${project.parent.name}, project.root:${project.rootProject.name}, project.depth:${project.depth}"
+                    classpathConfig/*.incoming.artifactView { view ->
+                        view.attributes { attr -> attr.attribute(artifactType, CLASSES_JAR) }
+                    }.files.files*/
+                    //.outgoing.artifacts
+                            .each {
+                                LOG.warn "${it.path}${it.path.endsWith('.aar') ? ' ×' : ''}"
+                            }
+                    LOG.warn ''
+                }
+            } catch (e) {
+                LOG.warn "$NAME_PLUGIN ---> [printClasspath]$e"
+            }
+        }
+    }
     /*private List<Project> findMainSubProject(Project project) {
         // 无法拿到其它 subproject 的配置信息，时序问题：apply `com.android.application`的 project 还未开始配置。
         LOG.info "$NAME_PLUGIN ---> [findMainSubProject]${project.rootProject} | name:${project.rootProject.name}, path:${project.rootProject.path}, version:${project.rootProject.version}"
