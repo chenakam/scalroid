@@ -109,6 +109,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
     static final main = 'main'
     static final test = 'test'
     static final androidTest = 'androidTest'
+    static final unitTest = 'unitTest'
     static final debug = 'debug'
     static final release = 'release'
 
@@ -134,7 +135,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
     }
 
     private void testPrintParameters(Project project) {
-        LOG.warn "applying plugin `$ID_PLUGIN` by ${project}"
+        LOG.warn "applying plugin `$ID_PLUGIN` for ${project}"
         // project.path: :app, project.name: app, project.group: DemoMaterial3, project.version: unspecified
         //LOG.info "$NAME_PLUGIN ---> project.path: ${project.path}, project.name: ${project.name}, project.group: ${project.group}, project.version: ${project.version}"
         //LOG.info ''
@@ -292,7 +293,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             // 具体写在下边`x.register("xxx", ScalaCompile)`。
 
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
-            final variantsAll = androidExtension.testVariants + (isLibrary ? androidExtension.libraryVariants : androidExtension.applicationVariants)
+            final variantsAll = androidExtension.testVariants + androidExtension.unitTestVariants + (isLibrary ? androidExtension.libraryVariants : androidExtension.applicationVariants)
             final variantsNames = new HashSet<String>()
             final variantsMap = new HashMap<String, Object>()
             final variantSourceSetMap = new HashMap<String, Object>()
@@ -305,6 +306,8 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             LOG.info "$NAME_PLUGIN ---> variantsNames: ${variantsNames.join(", ")}"
             LOG.info ''
 
+            final testSourceSet = androidExtension.sourceSets.getByName(test)
+            final androidTestSourceSet = androidExtension.sourceSets.getByName(androidTest)
             androidExtension.sourceSets.each { sourceSet -> // androidTest, test, main
                 LOG.info "$NAME_PLUGIN <<<===>>> sourceSet.name:${sourceSet.name}, sourceSet:$sourceSet"
 
@@ -314,15 +317,18 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 // 所以需要统一。
                 LOG.info "$NAME_PLUGIN ---> contains:${variantsNames.contains(sourceSet.name)}"
                 final srcSetNameMatchVariant = adjustSourceSetNameToMatchVariant(sourceSet.name, variantsNames)
-                if (!srcSetNameMatchVariant) return
+                if (srcSetNameMatchVariant) {
+                    variantSourceSetMap.put(srcSetNameMatchVariant, sourceSet)
 
-                variantSourceSetMap.put(srcSetNameMatchVariant, sourceSet)
+                    if (srcSetNameMatchVariant != main && srcSetNameMatchVariant != test) {
+                        //final variant = variantsMap[srcSetNameMatchVariant] // 没有名为`main`的
+                        final isTest = maybeIsTest(srcSetNameMatchVariant)
+                        final isAndroidTest = [androidTest, androidTest.capitalize()].any { srcSetNameMatchVariant.contains(it) }
+                        //ScalaRuntime scalaRuntime = project.extensions.getByName(SCALA_RUNTIME_EXTENSION_NAME)
 
-                final variant = variantsMap[srcSetNameMatchVariant] // 没有名为`main`的
-                final isTest = maybeIsTest(srcSetNameMatchVariant)
-                //ScalaRuntime scalaRuntime = project.extensions.getByName(SCALA_RUNTIME_EXTENSION_NAME)
-
-                configureScalaCompile(project, variant, sourceSet, mainSourceSet, androidExtension, srcSetNameMatchVariant, isLibrary, isTest)
+                        configureScalaCompile(project, sourceSet, mainSourceSet, androidTestSourceSet, testSourceSet, androidExtension, srcSetNameMatchVariant, isLibrary, isTest, isAndroidTest)
+                    }
+                }
             }
 
             LOG.info "||||||||| |||||||||| |||||||||| link all variants depends on |||||||||| |||||||||| ||||||||||"
@@ -333,10 +339,11 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 LOG.info ''
 
                 final isTest = maybeIsTest(variant.name)
+                final isAndroidTest = [androidTest, androidTest.capitalize()].any { variant.name.contains(it) }
                 if (!possibleVariant && !isTest) possibleVariant = variant
                 final sourceSet = variantSourceSetMap[variant.name]
 
-                linkScalaCompileDependsOn(project, scalroid, androidPlugin, androidExtension, workDir, variant, sourceSet, isLibrary, isTest)
+                linkScalaCompileDependsOn(project, scalroid, androidPlugin, androidExtension, workDir, variant, sourceSet, isLibrary, isTest, isAndroidTest)
 
                 LOG.info "<<<<<<<<<<<============ ${variant.name} DONE ===============>>>>>>>>>>>>>>>>>>>"
             }
@@ -411,27 +418,28 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         return true
     }
 
-    private void configureScalaCompile(Project project, @Nullable variant, sourceSet, mainSourceSet, androidExtension, String src$vaName, boolean isLibrary, boolean isTest) {
-        final ScalaSourceDirectorySet scalaDirectorySet = sourceSet.extensions.getByType(ScalaSourceDirectorySet)
-        Configuration classpathBySourceSetImpl = project.configurations.getByName(sourceSet.implementationConfigurationName)
+    private void configureScalaCompile(Project project, sourceSet, mainSourceSet, androidTestSourceSet, testSourceSet, androidExtension, String src$vaName, boolean isLibrary, boolean isTest, boolean isAndroidTest) {
+        assert sourceSet != mainSourceSet && sourceSet != androidTestSourceSet && sourceSet != testSourceSet && mainSourceSet != androidTestSourceSet && mainSourceSet != testSourceSet && androidTestSourceSet != testSourceSet
+
+        final Configuration classpathBySourceSetImpl = project.configurations.getByName(sourceSet.implementationConfigurationName)
+        final Configuration mainClasspathImpl = project.configurations.getByName(mainSourceSet.implementationConfigurationName)
         //printConfiguration(project, sourceSet.implementationConfigurationName)
 
-        ScalaSourceDirectorySet mainScalaDirSet
-        Configuration mainClasspathImpl = null
-        if (sourceSet != mainSourceSet) {
-            mainScalaDirSet = mainSourceSet.extensions.getByType(ScalaSourceDirectorySet)
-            // 等同于`project.configurations.implementation`
-            mainClasspathImpl = project.configurations.getByName(mainSourceSet.implementationConfigurationName)
-
-            LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]mainScalaDirSet.name:${mainScalaDirSet.name}, mainScalaDirSet.displayName:${mainScalaDirSet.displayName}"
-            LOG.info ''
-        }
         // 打印查看，各 variant 的 implementation 都包含了 main 的（但是 {variant}AndroidTest 没有，所以还是要加上），且包含 api, compileOnly 等：
         // xxxConfig.hierarchy.each { Configuration it ->
         //     println " -- ${it}"
         //     it.attributes.each { attrs -> } …
         // 实测：有时不在`config.extendsFrom()`的第一层不行，所以得展开（`.getHierarchy()`）。
         def classpathConfigs = classpathBySourceSetImpl.hierarchy.toList() + (mainClasspathImpl ? mainClasspathImpl.hierarchy.toList() : [])
+        if (isTest) {
+            if (isAndroidTest) {
+                final Configuration androidTestClasspathImpl = project.configurations.getByName(androidTestSourceSet.implementationConfigurationName)
+                if (androidTestClasspathImpl) classpathConfigs += androidTestClasspathImpl.hierarchy.toList()
+            } else {
+                final Configuration testClasspathSrcSetImpl = project.configurations.getByName(testSourceSet.implementationConfigurationName)
+                if (testClasspathSrcSetImpl) classpathConfigs += testClasspathSrcSetImpl.hierarchy.toList()
+            }
+        }
         classpathConfigs.removeIf { !it || it.dependencies.isEmpty() }
         classpathConfigs = classpathConfigs.toSet()
         LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]sourceSet.name:${sourceSet.name}, classpathConfigs.size:${classpathConfigs.size()}"
@@ -445,7 +453,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         incrementalAnalysis.attributes.attribute(USAGE_ATTRIBUTE, factory.named(Usage, "incremental-analysis"))
 
         project.tasks.register(genScalaCompileTaskName(src$vaName), ScalaCompile) { ScalaCompile scalaCompile ->
-            LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]compileTaskName:${scalaCompile.name}, variant:${variant ? variant.name : null}, isLibrary:$isLibrary, isTest:$isTest"
+            LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]compileTaskName:${scalaCompile.name}, isLibrary:$isLibrary, isTest:$isTest, isAndroidTest:$isAndroidTest"
 
             final compilerClasspath = project.configurations.create("${src$vaName}ScalaCompileClasspath").setExtendsFrom(classpathConfigs)
 
@@ -455,12 +463,39 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             scalaCompile.classpath += androidExtension.bootClasspathConfig.mockableJarArtifact // mock `android.jar`
 
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
+            final ScalaSourceDirectorySet scalaDirectorySet = sourceSet.extensions.getByType(ScalaSourceDirectorySet)
             scalaCompile.source(scalaDirectorySet)
-            // TODO: 不编译的终极原因（`./gradlew :app:compileGithubDebugScala --info`）：
-            //  Skipping task ':app:compileGithubDebugScala' as it has no source files and no previous output files.
-            // 另外，`isTest`的原因：
-            // `:app:compile{variant}AndroidTestJavaWithJavac`本来就依赖于`:app:compile{variant}JavaWithJavac`，所以就不用在这里手动加了。
-            if (!isTest && mainScalaDirSet) scalaCompile.source(mainScalaDirSet)
+            if (isTest) {
+                // 但要加入到 classpath（实测没必要）
+                //scalaCompile.classpath += project.files(project.layout.buildDirectory.dir("tmp/scala-classes/${parseSimpleVariantNameForTest(src$vaName)}"))
+                if (isAndroidTest) {
+                    final ScalaSourceDirectorySet androidTestDirSet = androidTestSourceSet.extensions.getByType(ScalaSourceDirectorySet)
+                    if (androidTestDirSet) scalaCompile.source(androidTestDirSet)
+                } else {
+                    final ScalaSourceDirectorySet testDirectorySet = testSourceSet.extensions.getByType(ScalaSourceDirectorySet)
+                    if (testDirectorySet) scalaCompile.source(testDirectorySet)
+                }
+            } else {
+                // TODO: 不编译的终极原因（`./gradlew :app:compileGithubDebugScala --info`）：
+                //  Skipping task ':app:compileGithubDebugScala' as it has no source files and no previous output files.
+                final ScalaSourceDirectorySet mainScalaDirSet = mainSourceSet.extensions.getByType(ScalaSourceDirectorySet)
+                // 另外，`!isTest`的原因：
+                // `:app:compile{variant}AndroidTestJavaWithJavac`本来就依赖于`:app:compile{variant}JavaWithJavac`，所以就不用在这里手动加了。
+                scalaCompile.source(mainScalaDirSet)
+
+                // 没必要，下面`scalaCompile.dependsOn xxx`有。这里主要是为了源码引用不标红，但不起作用。
+                /*scalaCompile.source(project.layout.buildDirectory.dir('generated').flatMap(new Transformer<Provider<FileCollection>, Directory>() {
+                    @Override
+                    Provider<FileCollection> transform(Directory dir) {
+                        return project.provider(new Callable<FileCollection>() {
+                            @Override
+                            FileCollection call() throws Exception {
+                                return dir.asFileTree.filter { File f -> f.path.endsWith('.java') }
+                            }
+                        })
+                    }
+                }))*/
+            }
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
 
             scalaCompile.description = "Compiles the ${scalaDirectorySet}."
@@ -568,11 +603,10 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         compilerClasspath.attributes.attribute(artifactType, CLASSES_JAR)
 
         //final isDebug = [debug, debug.capitalize()].any { src$vaName.contains(it) }
-        final apiElements = project.configurations.findByName("${isTest ? parseMainVariantNameForTest(src$vaName) : src$vaName}ApiElements")
-        final runtimeElements = project.configurations.findByName("${isTest ? parseMainVariantNameForTest(src$vaName) : src$vaName}RuntimeElements")
+        final apiElements = project.configurations.findByName("${isTest ? parseSimpleVariantNameForTest(src$vaName) : src$vaName}ApiElements")
+        final runtimeElements = project.configurations.findByName("${isTest ? parseSimpleVariantNameForTest(src$vaName) : src$vaName}RuntimeElements")
         final elements = runtimeElements ? runtimeElements : apiElements
-        //src$vaName == main 时，elements = null
-        if (elements) elements.attributes.each { attrs ->
+        elements.attributes.each { attrs ->
             attrs.keySet().each { attr ->
                 final value = attrs.getAttribute(attr)
                 LOG.info "$NAME_PLUGIN ---> [setClasspathAttributes]attribute > ${attr.name} -> ${value} / ${value.class}"
@@ -585,7 +619,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         return compilerClasspath
     }
 
-    private void linkScalaCompileDependsOn(Project project, ScalroidExtension scalroid, Plugin androidPlugin, androidExtension, File workDir, variant, sourceSet, boolean isLibrary, boolean isTest) {
+    private void linkScalaCompileDependsOn(Project project, ScalroidExtension scalroid, Plugin androidPlugin, androidExtension, File workDir, variant, sourceSet, boolean isLibrary, boolean isTest, boolean isAndroidTest) {
         //LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]androidPlugin:${androidPlugin}" // com.android.build.gradle.AppPlugin@8ab260a
         //LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]workDir:${workDir.path}" // /Users/{PATH-TO-}/demo-material-3/app/build/scalroid
         LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]variant:${variant.name}" // githubDebug
@@ -616,26 +650,6 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 // scalaCompile.scalaCompileOptions 可以在`build.gradle`脚本中配置
                 //scalaCompile.scalaCompileOptions.encoding = scalaCompile.options.encoding
 
-                final processRes = project.tasks.findByName(processResourcesTaskName)
-                final rFile = project.tasks.findByName(rFileTaskName)
-                final dataBinding = project.tasks.findByName(dataBindingGenBaseTaskName)
-                if (processRes) {
-                    scalaCompile.dependsOn processRes
-                    scalaCompile.classpath += project.files(processRes.outputs.files.find { it.path.endsWith("${variant.name}/R.jar") })
-                } else if (rFile) {
-                    scalaCompile.dependsOn rFile
-                    scalaCompile.classpath += project.files(rFile.outputs.files.find { it.path.endsWith("${variant.name}/R.jar") })
-                }
-                // 把生成的`BuildConfig`加入依赖。同理，还可以加入别的。
-                project.tasks.getByName(buildConfigTaskName) { Task buildConfig -> // ...
-                    scalaCompile.source(buildConfig)
-                    evictCompileOutputForSrcTask(project, scalaCompile, buildConfig, scalroid, 'src/main/java/', 'src/main/kotlin/')
-                }
-                if (dataBinding) {
-                    scalaCompile.source(dataBinding.outputs.files.filter { it.path.contains("/generated/") && it.path.contains("/${variant.name}/") })
-                    evictCompileOutputForSrcTask(project, scalaCompile, dataBinding, null /*置为 null，避免重复计算。*/)
-                }
-
                 final kotlinCompile = project.tasks.findByName(kotlinTaskName)
                 if (kotlinCompile) {
                     //LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]kotlinCompile:${kotlinCompile} / ${kotlinCompile.class}" // org.jetbrains.kotlin.gradle.tasks.KotlinCompile
@@ -648,10 +662,33 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 // `:app:compile{variant}JavaWithJavac`依赖于`:app:compile{variant}Scala`，所以就不用在这里手动加了（加也无妨）。
                 if (isTest) {
                     LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]isTest:$isTest"
-                    final scalaMainVarTaskName = genScalaCompileTaskName(parseMainVariantNameForTest(variant.name))
-                    project.tasks.withType(ScalaCompile).getByName(scalaMainVarTaskName) { ScalaCompile scalaCompileMainVar ->
-                        LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]scalaCompileMainVar.name:${scalaCompileMainVar.name}"
-                        scalaCompile.dependsOn scalaCompileMainVar
+                    final scalaMainVarTaskName = genScalaCompileTaskName(parseSimpleVariantNameForTest(variant.name))
+                    project.tasks.withType(ScalaCompile).getByName(scalaMainVarTaskName) { ScalaCompile scalaCompileSimple ->
+                        LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]scalaCompileSimple.name:${scalaCompileSimple.name}"
+                        scalaCompile.dependsOn scalaCompileSimple
+                    }
+                    evictCompileOutputForSrcTask(project, scalaCompile, null, scalroid,
+                            "src/${isAndroidTest ? androidTest : test}/java/", "src/${isAndroidTest ? androidTest : test}/kotlin/",
+                            "src/${sourceSet.name}/java/", "src/${sourceSet.name}/kotlin/")
+                } else {
+                    final processRes = project.tasks.findByName(processResourcesTaskName)
+                    final rFile = project.tasks.findByName(rFileTaskName)
+                    final dataBinding = project.tasks.findByName(dataBindingGenBaseTaskName)
+                    if (processRes) {
+                        scalaCompile.dependsOn processRes
+                        scalaCompile.classpath += project.files(processRes.outputs.files.find { it.path.endsWith("${variant.name}/R.jar") })
+                    } else if (rFile) {
+                        scalaCompile.dependsOn rFile
+                        scalaCompile.classpath += project.files(rFile.outputs.files.find { it.path.endsWith("${variant.name}/R.jar") })
+                    }
+                    // 把生成的`BuildConfig`加入依赖。同理，还可以加入别的。
+                    project.tasks.getByName(buildConfigTaskName) { Task buildConfig -> // ...
+                        scalaCompile.source(buildConfig)
+                        evictCompileOutputForSrcTask(project, scalaCompile, buildConfig, scalroid, "src/${main}/java/", "src/${main}/kotlin/", "src/${sourceSet.name}/java/", "src/${sourceSet.name}/kotlin/")
+                    }
+                    if (dataBinding) {
+                        scalaCompile.source(dataBinding.outputs.files.filter { it.path.contains("/generated/") && it.path.contains("/${variant.name}/") })
+                        evictCompileOutputForSrcTask(project, scalaCompile, dataBinding, null /*置为 null，避免重复计算。*/)
                     }
                 }
             }
@@ -660,7 +697,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         }
     }
 
-    private void evictCompileOutputForSrcTask(Project project, AbstractCompile dest, Task src, @Nullable ScalroidExtension scalroid, String... srcDirs) {
+    private void evictCompileOutputForSrcTask(Project project, AbstractCompile dest, @Nullable Task src, @Nullable ScalroidExtension scalroid, String... srcDirs) {
         // 无法创建针对输出的过滤器（而输入默认携带`task.exclude()`），试过所以方法（包括搜索文档）。因为`task.outputs.xxx`基本都是不可变的，意味着
         // 调用某的方法仅返回一个值，无法设置进去从而起作用。
         //PatternFilterable patternFilter = patternSetFactory.create()
@@ -900,45 +937,34 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         return "dataBindingGenBaseClasses${srcSetNameMatchVariant.capitalize()}"
     }
 
-    private String parseMainVariantNameForTest(String name) {
+    private String parseSimpleVariantNameForTest(String name) {
         //assert maybeIsTest(name)
-        if (name == androidTest || name == test) {
-            return main
+        if (/*name == main || */ name == androidTest || name == test) {
+            return name
         } else if (name.endsWith(androidTest.capitalize())) {
             return name.substring(0, name.length() - androidTest.length())
+        } else if (name.endsWith(unitTest.capitalize())) {
+            return name.substring(0, name.length() - unitTest.length())
         } else {
             assert name.endsWith(test.capitalize())
             return name.substring(0, name.length() - test.length())
         }
     }
 
-    private String parseAndroidTestForTest(String name) {
-        if (name == androidTest || name == test) {
-            return name
-        } else if (!(name.contains(test) || name.contains(test.capitalize()))) {
-            return null
-        } else if (name.endsWith(androidTest.capitalize())) {
-            return androidTest
-        } else {
-            assert name.endsWith(test.capitalize())
-            return test
-        }
-    }
-
     private boolean maybeIsTest(String name) {
-        final isTest = name == androidTest || name == test || name.endsWith(androidTest.capitalize()) || name.endsWith(test.capitalize())
+        final isTest = name == androidTest || name == test || name == unitTest || name.endsWith(androidTest.capitalize()) || name.endsWith(test.capitalize()) || name.endsWith(unitTest.capitalize())
         assert isTest || !(name.contains(androidTest) || name.contains(androidTest.capitalize()) || name.contains(test) || name.contains(test.capitalize()))
         return isTest
     }
 
     private String adjustSourceSetNameToMatchVariant(String sourceSetName, Set<String> variantsNames) {
         String srcSetNameMatchVariant = sourceSetName
-        if (srcSetNameMatchVariant != main) {
+        if (srcSetNameMatchVariant != main && srcSetNameMatchVariant != test) {
             if (!variantsNames || !variantsNames.contains(srcSetNameMatchVariant)) {
                 if (srcSetNameMatchVariant.startsWith(androidTest)) {
                     if (srcSetNameMatchVariant != androidTest) srcSetNameMatchVariant = srcSetNameMatchVariant.substring(androidTest.length()).uncapitalize() + androidTest.capitalize()
-                } else if (srcSetNameMatchVariant.startsWith(test)) {
-                    if (srcSetNameMatchVariant != test) srcSetNameMatchVariant = srcSetNameMatchVariant.substring(test.length()).uncapitalize() + test.capitalize()
+                } else if (srcSetNameMatchVariant.startsWith(test)) { // 注意`unitTest`比较特殊
+                    if (srcSetNameMatchVariant != test) srcSetNameMatchVariant = srcSetNameMatchVariant.substring(test.length()).uncapitalize() + unitTest.capitalize()
                 } else if (srcSetNameMatchVariant.contains(androidTest.capitalize()) || srcSetNameMatchVariant.contains(test.capitalize()) || srcSetNameMatchVariant.contains(androidTest) || srcSetNameMatchVariant.contains(test)) {
                     // 不在开头，那就在中间或结尾，即：`androidTest`或`test`的首字母大写。
                     //LOG.info "$NAME_PLUGIN ---> exception:${srcSetNameMatchVariant}"
@@ -947,7 +973,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             }
             if (variantsNames && !variantsNames.contains(srcSetNameMatchVariant)) {
                 LOG.info "$NAME_PLUGIN ||| return (srcSetNameMatchVariant:$srcSetNameMatchVariant)"
-                return null
+                srcSetNameMatchVariant = null
             }
         }
         LOG.info "$NAME_PLUGIN ---> srcSetNameMatchVariant:${srcSetNameMatchVariant}"
@@ -978,13 +1004,9 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 if (!projNameOnly || project.name == projNameOnly) {
                     LOG.warn "$NAME_PLUGIN ---> [printClasspath]project:${project.name}, variant:${src$vaName}"
                     LOG.warn "$NAME_PLUGIN ---> [printClasspath]project.parent:${project.parent.name}, project.root:${project.rootProject.name}, project.depth:${project.depth}"
-                    classpathConfig/*.incoming.artifactView { view ->
-                        view.attributes { attr -> attr.attribute(artifactType, CLASSES_JAR) }
-                    }.files.files*/
-                    //.outgoing.artifacts
-                            .each {
-                                LOG.warn "${it.path}${it.path.endsWith('.aar') ? ' ×' : ''}"
-                            }
+                    classpathConfig.each {
+                        LOG.warn "${it.path}${it.path.endsWith('.aar') ? ' ×' : ''}"
+                    }
                     LOG.warn ''
                 }
             } catch (e) {
