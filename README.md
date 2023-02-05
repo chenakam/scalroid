@@ -2,6 +2,8 @@
 
 [![Join the chat at https://gitter.im/scalroid/community](https://badges.gitter.im/scalroid/community.svg)](https://gitter.im/scalroid/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
+[**`Discord#scala-android`**](https://discord.gg/RrtXCpsUZ5)
+
 A `scala-kotlin-java` union compile `Gradle plugin`, for native Android.
 
 * Also refers demo project [scalroid-build-demo](https://github.com/chenakam/scalroid-build-demo)
