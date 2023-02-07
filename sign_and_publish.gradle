@@ -22,7 +22,7 @@ gradlePlugin {
             //implementationClass = 'cash.bdo.ScalaAndroidCompatPlugin'
 
             displayName = 'A scala-supported plugin for android'
-            description = 'A scala-kotlin-java union compile Gradle plugin, for native Android.'
+            description = 'A scala-kotlin-java union compile plugin based on Gradle, for native Android.'
             tags.set(['android', 'scala', 'kotlin', 'java', 'union', 'compile', 'compatibility'])
         }
     }
