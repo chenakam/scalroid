@@ -4,9 +4,25 @@
 
 [**`Discord#scala-android`**](https://discord.gg/RrtXCpsUZ5)
 
-A `scala-kotlin-java` union compile `Gradle plugin`, for native Android.
+A `scala-kotlin-java` union compile plugin based on `Gradle`, for `native Android`.
+
+The plugin was built with `ScalaBasePlugin`, which is also an official plugin for `Gradle`, cooperates perfectly with the `Android` official plugin, is a supplement. It
+takes very little code to put the two together but functional maturation, includes `androidTest` and `unitTest`. There are no conflicts or incompatibilities, even if it
+does, it's easy to update and maintain.
+
+Now, this plugin is well developed and ready for official use.
 
 * Also refers demo project [scalroid-build-demo](https://github.com/chenakam/scalroid-build-demo)
+
+## Supported versions
+
+| Gradle          | Android Plugin    | Kotlin Plugin       | Scala (this plugin compiles) |
+|-----------------|-------------------|---------------------|------------------------------|
+| `7.5` and newer | `7.4.0` and newer | `1.7.20+` ~ `1.8.0` | `2.10.x` ~ `3.x`             |
+
+* The Scala version fully supports the `ScalaPlugin` of gradle, see official documentation:
+  https://docs.gradle.org/current/userguide/scala_plugin.html#sec:configure_zinc_compiler  
+  For details about how to set `zincVersion`, see the example code below.
 
 ## Usage
 
@@ -31,11 +47,27 @@ git clone git@github.com:chenakam/scalroid.git buildSrc
     /buildSrc             # This repo dir
     /other_modules
     /...
+    /build.gradle
+    /...
 ```
 
-2. Add `apply plugin: 'cash.bdo.scalroid'` to your `app/build.gradle` file:
+2. Add `id 'cash.bdo.scalroid' xxx` to your `/build.gradle` file:
 
-* See https://plugins.gradle.org/plugin/cash.bdo.scalroid if _**Step 1**_ was not done.
+* See also https://plugins.gradle.org/plugin/cash.bdo.scalroid
+
+```groovy
+// ...
+plugins {
+    id 'com.android.application' version '7.4.1' apply false
+    id 'com.android.library' version '7.4.1' apply false
+    id 'org.jetbrains.kotlin.android' version '1.8.0' apply false
+
+    // TODO: if you have not clone the dir `buildSrc/`, you need to uncomment the `version` filed.
+    id 'cash.bdo.scalroid' /*version '[1.3,)'*/ apply false
+}
+```
+
+3. Add `apply plugin: 'cash.bdo.scalroid'` to your `app/build.gradle` file:
 
 ```groovy
 plugins {
@@ -56,7 +88,7 @@ android {
 //        scala.zincVersion.set('1.6.1')
 //        scalaCodeReferToKt = false
 //        ktCodeReferToScala = true
-        javaDirsExcludes = ['/main/kotlin/']
+//        javaDirsExcludes = ['src/main/kotlin']
     }
     // ...
 }
@@ -76,7 +108,7 @@ dependencies {
 }
 ```
 
-3. You can edit any code in `your_project/buildSrc/src` as needed, and then click the **button** with tooltip `Sync Project with Gradle Files` in the toolbar of
+4. You can edit any code in `your_project/buildSrc/src` as needed, and then click the **button** with tooltip `Sync Project with Gradle Files` in the toolbar of
    your `Android Studio`, your modified code will be applied immediately.
 
 ## Preferences
