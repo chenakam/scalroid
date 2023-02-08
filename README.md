@@ -16,9 +16,9 @@ Now, this plugin is well developed and ready for official use.
 
 ## Supported versions
 
-| Gradle          | Android Plugin    | Kotlin Plugin       | Scala (this plugin compiles) |
-|-----------------|-------------------|---------------------|------------------------------|
-| `7.5` and newer | `7.4.0` and newer | `1.7.20+` ~ `1.8.0` | `2.10.x` ~ `3.x`             |
+| Gradle          | Android Plugin    | Kotlin Plugin            | Scala (this plugin compiles) |
+|-----------------|-------------------|--------------------------|------------------------------|
+| `7.5` and newer | `7.4.0` and newer | `1.7.20` ~ `1.8.20-Beta` | `2.10.x` ~ `3.x`             |
 
 * The Scala version fully supports the `ScalaPlugin` of gradle, see official documentation:
   https://docs.gradle.org/current/userguide/scala_plugin.html#sec:configure_zinc_compiler  
