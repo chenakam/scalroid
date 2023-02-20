@@ -24,6 +24,26 @@ Now, this plugin is well developed and ready for official use.
   https://docs.gradle.org/current/userguide/scala_plugin.html#sec:configure_zinc_compiler  
   For details about how to set `zincVersion`, see the example code below.
 
+* Known issues:  
+  Since the Android's built-in _`JDK/JRE`_ does NOT have implements the class `java.lang.ClassValue`, but some classes require it, such as `scala.reflect.ClassTag`. So
+  i have made a copy [_**here**_](https://github.com/bdo-cash/assoid/blob/v.gradle/src/main/scala/java/lang/ClassValue.java).  
+  Or as an alternative, you can set _`cacheDisabled = true`_ in [**`ClassTag`**](https://github.com/scala/scala/blob/2.12.x/src/library/scala/reflect/ClassTag.scala#L140)
+  to avoid method calls to **`ClassValue`**. To achieve this, you can
+  use [_**`classTagDisableCache`**_](https://github.com/bdo-cash/assoid/blob/v.gradle/src/main/scala/scala/compat/classTagDisableCache.scala) (it works well even
+  after `Proguard/R8`) at the very beginning of your app startup (
+  e.g. [_**`AbsApp`**_](https://github.com/bdo-cash/assoid/blob/v.gradle/src/main/scala/hobby/wei/c/core/AbsApp.scala#L51)). But you still need to define a simple class
+  so that it can be found at runtime:
+  ```java
+    package java.lang;
+    //import hobby.wei.c.anno.proguard.Keep$;
+    //@Keep$
+    public abstract class ClassValue<T> {
+        protected abstract T computeValue(Class<?> type);
+        public T get(Class<?> type) { return null; }
+        public void remove(Class<?> type) {}
+    }
+  ```
+
 ## Usage
 
 1. Clone this repository to your project's `buildSrc` directory (**optional**):
