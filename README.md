@@ -2,7 +2,7 @@
 
 [![Join the chat at https://gitter.im/scalroid/community](https://badges.gitter.im/scalroid/community.svg)](https://gitter.im/scalroid/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-A `scala-kotlin-java` union compile plugin built on `Gradle`, for `native Android`.
+A `scala-kotlin-java` joint compilation plugin built on `Gradle`, for `native Android`.
 
 The plugin was built with `ScalaBasePlugin`, which is also an official plugin of `Gradle`, cooperates perfectly with the `Android` official plugin, is a supplement. It
 takes very little code to put the two together but functional maturation, includes `androidTest` and `unitTest`. There are no conflicts or incompatibilities, even if it
