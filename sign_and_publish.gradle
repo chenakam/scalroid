@@ -6,7 +6,7 @@
 apply plugin: 'signing'
 
 group = 'cash.bdo.dev'
-version = '1.4-SNAPSHOT' //'0.4-test'
+version = '1.4-SNAPSHOT' // latest: '1.4-alpha'
 
 ext.isReleaseVersion = !version.endsWith('SNAPSHOT')
 
@@ -22,7 +22,7 @@ gradlePlugin {
             //implementationClass = 'cash.bdo.ScalaAndroidCompatPlugin'
 
             displayName = 'A scala-supported plugin for android'
-            description = 'A scala-kotlin-java union compile plugin built on Gradle, for native Android.'
+            description = 'A scala-kotlin-java joint compilation plugin built on Gradle, for native Android.'
             tags.set(['android', 'scala', 'kotlin', 'java', 'union', 'compile', 'compatibility'])
         }
     }
