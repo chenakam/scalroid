@@ -2,7 +2,7 @@
 
 [![Join the chat at https://gitter.im/scalroid/community](https://badges.gitter.im/scalroid/community.svg)](https://gitter.im/scalroid/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-A `scala-kotlin-java` union compile plugin built on `Gradle`, for `native Android`.
+A `scala-kotlin-java` joint compilation plugin built on `Gradle`, for `native Android`.
 
 The plugin was built with `ScalaBasePlugin`, which is also an official plugin of `Gradle`, cooperates perfectly with the `Android` official plugin, is a supplement. It
 takes very little code to put the two together but functional maturation, includes `androidTest` and `unitTest`. There are no conflicts or incompatibilities, even if it
@@ -16,31 +16,33 @@ Now, this plugin is well developed and ready for official use.
 
 | Gradle          | Android Plugin    | Kotlin Plugin            | Scala (this plugin compiles) |
 |-----------------|-------------------|--------------------------|------------------------------|
-| `7.5` and newer | `7.4.0` and newer | `1.7.20` ~ `1.8.20-Beta` | `2.10.x` ~ `3.x`             |
+| `7.5` ~ `8.0.1` | `7.4.0` and newer | `1.7.20` ~ `1.8.20-Beta` | `2.10.x` ~ `3.x`             |
 
 * The Scala version fully supports the `ScalaPlugin` of gradle, see official documentation:
   https://docs.gradle.org/current/userguide/scala_plugin.html#sec:configure_zinc_compiler  
   For details about how to set `zincVersion`, see the example code below.
 
-* Known issues:  
-  Since the Android's built-in _`JDK/JRE`_ does NOT have implements the class `java.lang.ClassValue`, but some classes require it, such as `scala.reflect.ClassTag`. So
-  i have made a copy [_**here**_](https://github.com/bdo-cash/assoid/blob/v.gradle/src/main/scala/java/lang/ClassValue.java).  
-  Or as an alternative, you can set _`cacheDisabled = true`_ in [**`ClassTag`**](https://github.com/scala/scala/blob/2.12.x/src/library/scala/reflect/ClassTag.scala#L140)
-  to avoid method calls to **`ClassValue`**. To achieve this, you can
-  use [_**`classTagDisableCache`**_](https://github.com/bdo-cash/assoid/blob/v.gradle/src/main/scala/scala/compat/classTagDisableCache.scala) (it works well even
-  after `Proguard/R8`) at the very beginning of your app startup (
-  e.g. [_**`AbsApp`**_](https://github.com/bdo-cash/assoid/blob/v.gradle/src/main/scala/hobby/wei/c/core/AbsApp.scala#L51)). But you still need to define a simple class
-  so that it can be found at runtime:
-  ```java
-    package java.lang;
-    //import hobby.wei.c.anno.proguard.Keep$;
-    //@Keep$
-    public abstract class ClassValue<T> {
-        protected abstract T computeValue(Class<?> type);
-        public T get(Class<?> type) { return null; }
-        public void remove(Class<?> type) {}
-    }
-  ```
+* Known issues:
+    - Since the Android's built-in _`JDK/JRE`_ does NOT have implements the class `java.lang.ClassValue`, but some classes require it, such as `scala.reflect.ClassTag`.
+      So i have made a copy [_**here**_](https://github.com/bdo-cash/assoid/blob/v.gradle/src/main/scala/java/lang/ClassValue.java).  
+      Or as an alternative, you can set _`cacheDisabled = true`_
+      in [**`ClassTag`**](https://github.com/scala/scala/blob/2.12.x/src/library/scala/reflect/ClassTag.scala#L140) to avoid method calls to **`ClassValue`**. To achieve
+      this, you can use [_**`classTagDisableCache`**_](https://github.com/bdo-cash/assoid/blob/v.gradle/src/main/scala/scala/compat/classTagDisableCache.scala) (it works
+      well even after `Proguard/R8`) at the very beginning of your app startup (
+      e.g. [_**`AbsApp`**_](https://github.com/bdo-cash/assoid/blob/v.gradle/src/main/scala/hobby/wei/c/core/AbsApp.scala#L51)). But you still need to define a simple
+      class so that it can be found at runtime:
+      ```java
+      package java.lang;
+      //import hobby.wei.c.anno.proguard.Keep$;
+      //@Keep$
+      public abstract class ClassValue<T> {
+          protected abstract T computeValue(Class<?> type);
+          public T get(Class<?> type) { return null; }
+          public void remove(Class<?> type) {}
+      }
+      ```
+    - Since the Gradle have bugs in `Scala incremental compilation` and did not fixed yet in version **7.x**: [#23202](https://github.com/gradle/gradle/issues/23202).
+      Therefore, Gradle **v8.0.1** is recommended, and Scala incremental compilation works well.
 
 ## Usage
 
