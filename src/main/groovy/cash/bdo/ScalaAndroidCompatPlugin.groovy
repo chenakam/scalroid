@@ -23,11 +23,7 @@ import org.gradle.api.ProjectConfigurationException
 import org.gradle.api.Task
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.Dependency
-import org.gradle.api.artifacts.component.ComponentIdentifier
-import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.artifacts.type.ArtifactTypeDefinition
-import org.gradle.api.attributes.Usage
-import org.gradle.api.component.SoftwareComponentFactory
 import org.gradle.api.file.FileCollection
 import org.gradle.api.file.SourceDirectorySet
 import org.gradle.api.internal.tasks.DefaultScalaSourceSet
@@ -35,13 +31,11 @@ import org.gradle.api.logging.Logger
 import org.gradle.api.logging.Logging
 import org.gradle.api.model.ObjectFactory
 import org.gradle.api.plugins.JavaBasePlugin
-import org.gradle.api.plugins.jvm.internal.JvmPluginServices
 import org.gradle.api.plugins.scala.ScalaBasePlugin
 import org.gradle.api.plugins.scala.ScalaPlugin
 import org.gradle.api.plugins.scala.ScalaPluginExtension
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
-import org.gradle.api.specs.Spec
 import org.gradle.api.tasks.ScalaSourceDirectorySet
 import org.gradle.api.tasks.TaskProvider
 import org.gradle.api.tasks.compile.AbstractCompile
@@ -49,14 +43,11 @@ import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.api.tasks.scala.IncrementalCompileOptions
 import org.gradle.api.tasks.scala.ScalaCompile
 import org.gradle.api.tasks.scala.ScalaDoc
-import org.gradle.api.tasks.util.PatternSet
-import org.gradle.internal.Factory
 
 import javax.annotation.Nullable
 import javax.inject.Inject
 import java.util.concurrent.Callable
 
-import static org.gradle.api.attributes.Usage.USAGE_ATTRIBUTE
 import static org.gradle.api.internal.lambdas.SerializableLambdas.spec
 
 interface ScalroidExtension {
@@ -84,6 +75,10 @@ interface ScalroidExtension {
     Property<String> getGreeter()
 }
 
+/**
+ * @author Chenai Nakam(chenai.nakam@gmail.com)
+ * @version 1.0 xx/07/2022
+ */
 class ScalaAndroidCompatPlugin implements Plugin<Project> {
     // TODO: e.g.
     //  `./gradlew :app:compileGithubDebugJavaWithJavac --stacktrace`
@@ -141,16 +136,16 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         //LOG.info ''
     }
     private final ObjectFactory factory
-    private final SoftwareComponentFactory softCptFactory
-    private final JvmPluginServices jvmServices
-    private final Factory<PatternSet> patternSetFactory
+    //private final SoftwareComponentFactory softCptFactory
+    //private final JvmPluginServices jvmServices
+    //private final Factory<PatternSet> patternSetFactory
 
     @Inject
-    ScalaAndroidCompatPlugin(ObjectFactory objectFactory, SoftwareComponentFactory softCptFactory, JvmPluginServices jvmServices, Factory<PatternSet> patternSetFactory) {
+    ScalaAndroidCompatPlugin(ObjectFactory objectFactory) {
         this.factory = objectFactory
-        this.softCptFactory = softCptFactory
-        this.jvmServices = jvmServices
-        this.patternSetFactory = patternSetFactory
+        //this.softCptFactory = softCptFactory
+        //this.jvmServices = jvmServices
+        //this.patternSetFactory = patternSetFactory
     }
 
     @Override
@@ -351,17 +346,20 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
             // 这一步需要等上面`linkScalaCompileDependsOn()`触发`ScalaCompile`配置完成，才能继续。
             // 但是没有名为`main`的 variant，也就没能正确`linkScalaCompileDependsOn()`，所以要找个`possibleVariant`。
-            configureScaladocAndIncrementalAnalysis(project, mainSourceSet, possibleVariant, isLibrary)
+            configureScaladocAndIncrementalElements(project, mainSourceSet, possibleVariant, isLibrary)
         }
     }
 
-    void configureScaladocAndIncrementalAnalysis(Project project, mainSourceSet, possibleVariant, boolean isLibrary) {
-        final mainScalaTaskName = genScalaCompileTaskName(possibleVariant.name) // mainSourceSet.name
-        final TaskProvider<ScalaCompile> compileScala = project.tasks.withType(ScalaCompile).named(mainScalaTaskName)
-        final mainScalaCompile = compileScala.get()
-        project.configurations.incrementalScalaAnalysisElements.outgoing.artifact(mainScalaCompile
-                .analysisMappingFile) { builtBy(compileScala) }
-        configureScaladoc(project, mainSourceSet, mainScalaCompile)
+    void configureScaladocAndIncrementalElements(Project project, mainSourceSet, possibleVariant, boolean isLibrary) {
+//        final mainScalaTaskName = genScalaCompileTaskName(possibleVariant.name) // mainSourceSet.name
+//        final TaskProvider<ScalaCompile> compileScala = project.tasks.withType(ScalaCompile).named(mainScalaTaskName)
+//        final mainScalaCompile = compileScala.get()
+        // 逻辑上，如果配置也是每个 variant 都配置。但这里没必要（针对依赖 subproject 的情况，必然也配置了 attribute，而且是输出）。
+        //project.configurations.incrementalScalaAnalysisElements.outgoing.artifact(mainScalaCompile.analysisMappingFile) { builtBy(compileScala) }
+
+        // 以上跟配置 scaladoc 也没关系，只不过`ScalaPlugin`把这两者写在一起了。
+        // 而由于不是一套体系，执行 scaladoc 任务报错，暂禁言了。
+//        configureScaladoc(project, mainSourceSet, mainScalaCompile)
     }
 
     // 把 scalroid 加入到 android 下面。可以这样写：
@@ -444,15 +442,31 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         classpathConfigs = classpathConfigs.toSet()
         LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]sourceSet.name:${sourceSet.name}, classpathConfigs.size:${classpathConfigs.size()}"
 
-        Configuration incrementalAnalysis = project.configurations.create("incrementalScalaAnalysisFor${src$vaName.capitalize()}")
-        incrementalAnalysis.description = "Incremental compilation analysis files for ${sourceSet.displayName}"
-        incrementalAnalysis.visible = false
-        incrementalAnalysis.canBeResolved = true
-        incrementalAnalysis.canBeConsumed = false
-        incrementalAnalysis.extendsFrom = classpathConfigs
-        incrementalAnalysis.attributes.attribute(USAGE_ATTRIBUTE, factory.named(Usage, "incremental-analysis"))
+        // TODO: 注释掉的原因见下面`scalaCompile.analysisMappingFile`的注释
+//        final incrementalAnalysisUsage = factory.named(Usage, "incremental-analysis")
+//        Configuration incrementalAnalysis = project.configurations.create("incrementalScalaAnalysisFor${src$vaName.capitalize()}")
+//        incrementalAnalysis.description = "Incremental compilation analysis input files for ${src$vaName}."
+//        incrementalAnalysis.visible = false
+//        incrementalAnalysis.canBeResolved = true
+//        incrementalAnalysis.canBeConsumed = false
+//        incrementalAnalysis.extendsFrom = classpathConfigs
+//        incrementalAnalysis.attributes.attribute(Usage.USAGE_ATTRIBUTE, incrementalAnalysisUsage)
 
-        project.tasks.register(genScalaCompileTaskName(src$vaName), ScalaCompile) { ScalaCompile scalaCompile ->
+        // 若启用，则要分`${src$vaName}`，`incrementalAnalysisUsage`也要分`${src$vaName}`。
+//        Configuration incrementalAnalysisElements = project.configurations.create("incrementalScalaAnalysisElements")
+//        incrementalAnalysisElements.setDescription("Incremental compilation analysis output files for ${src$vaName}.")
+//        incrementalAnalysisElements.setVisible(false)
+//        incrementalAnalysisElements.setCanBeResolved(false) // 注意这里与上面的区别。这里 subproject `publishCode()`，上面 resolve，即拉取依赖的 subproject 产出的工件（artifacts）。
+//        incrementalAnalysisElements.setCanBeConsumed(true)
+//        incrementalAnalysisElements.getAttributes().attribute(Usage.USAGE_ATTRIBUTE, incrementalAnalysisUsage)
+//        AttributeMatchingStrategy<Usage> matchingStrategy = dependencyHandler.getAttributesSchema().attribute(Usage.USAGE_ATTRIBUTE)
+//        matchingStrategy.getDisambiguationRules().add(ScalaBasePlugin.UsageDisambiguationRules.class, (actionConfiguration) -> {
+//            actionConfiguration.params(new Object[]{incrementalAnalysisUsage})
+//            actionConfiguration.params(new Object[]{this.objectFactory.named(Usage.class, "java-api")})
+//            actionConfiguration.params(new Object[]{this.objectFactory.named(Usage.class, "java-runtime")})
+//        })
+
+        final scalaCompileTask = project.tasks.register(genScalaCompileTaskName(src$vaName), ScalaCompile) { ScalaCompile scalaCompile ->
             LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]compileTaskName:${scalaCompile.name}, isLibrary:$isLibrary, isTest:$isTest, isAndroidTest:$isAndroidTest"
 
             final compilerClasspath = project.configurations.create("${src$vaName}ScalaCompileClasspath").setExtendsFrom(classpathConfigs)
@@ -490,7 +504,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                         return project.provider(new Callable<FileCollection>() {
                             @Override
                             FileCollection call() throws Exception {
-                                return dir.asFileTree.filter { File f -> f.path.endsWith('.java') }
+                                return dir.asFileTree.filter { File f -> f.path.endsWith('.java') && f.path.contains(src$vaName) }
                             }
                         })
                     }
@@ -498,26 +512,43 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             }
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
 
-            scalaCompile.description = "Compiles the ${scalaDirectorySet}."
+            scalaCompile.description = "Compiles Scala code for variant ${src$vaName}."
             //scalaCompile.javaLauncher.convention(getToolchainTool(project, JavaToolchainService::launcherFor))
-            scalaCompile.analysisMappingFile.set(project.layout.buildDirectory.file("scala/compilerAnalysis/${scalaCompile.name}.mapping"))
+
+            // TODO: 没用，只有同时配置了`incrementalOptions.publishedCode`这行才能被调用（但也没必要，会被后续其它后续任务`publish`，针对
+            //  依赖 subproject 的情况）。同时，是否是否禁用增量编译，仅需看是否存在`incrementalOptions.analysisFile`。
+            //  参见`scalaCompile.compile()` -> `isNonIncrementalCompilation()`。
+            scalaCompile.analysisMappingFile.set(project.layout.buildDirectory.file("scala/compilerAnalysis/${src$vaName}.mapping"))
 
             // Cannot compute at task execution time because we need association with source set
             IncrementalCompileOptions incrementalOptions = scalaCompile.scalaCompileOptions.incrementalOptions
-            incrementalOptions.analysisFile.set(project.layout.buildDirectory.file("scala/compilerAnalysis/${scalaCompile.name}.analysis"))
-            incrementalOptions.classfileBackupDir.set(project.layout.buildDirectory.file("scala/classfileBackup/${scalaCompile.name}.bak"))
+            incrementalOptions.analysisFile.set(project.layout.buildDirectory.file("scala/compilerAnalysis/${src$vaName}.analysis"))
+            incrementalOptions.classfileBackupDir.set(project.layout.buildDirectory.file("scala/classfileBackup/${src$vaName}.bak"))
 
-            scalaCompile.analysisFiles.from(incrementalAnalysis.incoming.artifactView {
-                lenient(true)
-                componentFilter(new Spec<ComponentIdentifier>() {
-                    boolean isSatisfiedBy(ComponentIdentifier element) { return element instanceof ProjectComponentIdentifier }
-                })
-            }.files)
+//            scalaCompile.analysisFiles.from(incrementalAnalysis.incoming.artifactView {
+//                lenient(true)
+//                componentFilter(new Spec<ComponentIdentifier>() {
+//                    boolean isSatisfiedBy(ComponentIdentifier element) { return element instanceof ProjectComponentIdentifier }
+//                })
+//            }.files)
             scalaCompile.dependsOn(scalaCompile.analysisFiles)
 
             // 目录与 kotlin 保持一致（原本下面要用到，但没用，已删）。
-            //scalaDirectorySet.destinationDirectory.convention(project.layout.buildDirectory.dir("tmp/scala-classes/${src$vaName}"))
-            scalaCompile.destinationDirectory.convention(/*scalaDirectorySet.destinationDirectory*/ project.layout.buildDirectory.dir("tmp/scala-classes/${src$vaName}"))
+            //scalaDirectorySet.destinationDirectory.convention(project.layout.buildDirectory.dir("tmp/scala-classes/pre${src$vaName.capitalize()}Roughly"))
+            scalaCompile.destinationDirectory.convention(/*scalaDirectorySet.destinationDirectory*/ project.layout.buildDirectory.dir("tmp/scala-classes/pre${src$vaName.capitalize()}Roughly"))
+        }
+
+        // 定义一个去重任务（由于在`scalaCompile.doLast{}`中删除某些文件会影响【增量编译】）
+        project.tasks.register(genDeduplicateClassesTaskName(src$vaName), ScalaDeDuplicateClassesTask) { ScalaDeDuplicateClassesTask classesTask ->
+            final scalaCompile = scalaCompileTask.get()
+
+            classesTask.inputDir.convention(scalaCompile.destinationDirectory)
+            classesTask.outputDir.convention(project.layout.buildDirectory.dir("tmp/scala-classes/${src$vaName}"))
+
+            classesTask.dependsOn scalaCompile
+
+            classesTask.LOG.set(LOG)
+            classesTask.NAME_PLUGIN.set(NAME_PLUGIN)
         }
     }
 
@@ -626,6 +657,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
 
         final javaTaskName = genJavaCompileTaskName(variant.name)
         final scalaTaskName = genScalaCompileTaskName(variant.name)
+        final scalaDeduplicateName = genDeduplicateClassesTaskName(variant.name)
         final kotlinTaskName = genKotlinCompileTaskName(variant.name)
         final buildConfigTaskName = genBuildConfigTaskName(variant.name)
         final processResourcesTaskName = genProcessResourcesTaskName(variant.name)
@@ -638,10 +670,12 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             project.tasks.withType(ScalaCompile).getByName(scalaTaskName) { ScalaCompile scalaCompile ->
                 LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]javaCompile.destinationDirectory:${javaCompile.destinationDirectory.orNull}"
 
-                javaCompile.dependsOn scalaCompile
+                final scalaDeduplicate = project.tasks.withType(ScalaDeDuplicateClassesTask).findByName(scalaDeduplicateName)
+                //javaCompile.dependsOn scalaCompile
+                javaCompile.dependsOn scalaDeduplicate
 
                 // 目录与 kotlin 保持一致（前面已经设置默认值了）
-                //scalaCompile.destinationDirectory.set(project.layout.buildDirectory.dir("tmp/scala-classes/${variant.name}"))
+                //scalaCompile.destinationDirectory.set(project.layout.buildDirectory.dir("tmp/scala-classes/pre${variant.name.capitalize()}Roughly"))
                 scalaCompile.sourceCompatibility = javaCompile.sourceCompatibility
                 scalaCompile.targetCompatibility = javaCompile.targetCompatibility
                 // Unexpected javac output: 警告: [options] 未与 -source 8 一起设置引导类路径
@@ -653,8 +687,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 final kotlinCompile = project.tasks.findByName(kotlinTaskName)
                 if (kotlinCompile) {
                     //LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]kotlinCompile:${kotlinCompile} / ${kotlinCompile.class}" // org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
-                    wireScalaTasks(project, scalroid, variant, project.tasks.named(scalaTaskName), project.tasks.named(javaTaskName), project.tasks.named(kotlinTaskName), isLibrary, isTest)
+                    wireScalaTasks(project, scalroid, variant, project.tasks.named(scalaTaskName), project.tasks.named(scalaDeduplicateName), project.tasks.named(javaTaskName), project.tasks.named(kotlinTaskName), isLibrary, isTest)
                 } else {
                     LOG.warn "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]kotlinCompile:null"
                 }
@@ -662,12 +695,17 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 // `:app:compile{variant}JavaWithJavac`依赖于`:app:compile{variant}Scala`，所以就不用在这里手动加了（加也无妨）。
                 if (isTest) {
                     LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]isTest:$isTest"
-                    final scalaMainVarTaskName = genScalaCompileTaskName(parseSimpleVariantNameForTest(variant.name))
+                    /*final scalaMainVarTaskName = genScalaCompileTaskName(parseSimpleVariantNameForTest(variant.name))
                     project.tasks.withType(ScalaCompile).getByName(scalaMainVarTaskName) { ScalaCompile scalaCompileSimple ->
                         LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]scalaCompileSimple.name:${scalaCompileSimple.name}"
                         scalaCompile.dependsOn scalaCompileSimple
+                    }*/
+                    final scalaMainVarTaskName = genDeduplicateClassesTaskName(parseSimpleVariantNameForTest(variant.name))
+                    project.tasks.getByName(scalaMainVarTaskName) { deduplicateClasses ->
+                        LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]deduplicateClasses.name:${deduplicateClasses.name}"
+                        scalaCompile.dependsOn deduplicateClasses
                     }
-                    evictCompileOutputForSrcTask(project, scalaCompile, null, scalroid,
+                    evictCompileOutputForSrcTask(scalaDeduplicate, project, scalaCompile, null, scalroid,
                             "src/${isAndroidTest ? androidTest : test}/java/", "src/${isAndroidTest ? androidTest : test}/kotlin/",
                             "src/${sourceSet.name}/java/", "src/${sourceSet.name}/kotlin/")
                 } else {
@@ -684,20 +722,18 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                     // 把生成的`BuildConfig`加入依赖。同理，还可以加入别的。
                     project.tasks.getByName(buildConfigTaskName) { Task buildConfig -> // ...
                         scalaCompile.source(buildConfig)
-                        evictCompileOutputForSrcTask(project, scalaCompile, buildConfig, scalroid, "src/${main}/java/", "src/${main}/kotlin/", "src/${sourceSet.name}/java/", "src/${sourceSet.name}/kotlin/")
+                        evictCompileOutputForSrcTask(scalaDeduplicate, project, scalaCompile, buildConfig, scalroid, "src/${main}/java/", "src/${main}/kotlin/", "src/${sourceSet.name}/java/", "src/${sourceSet.name}/kotlin/")
                     }
                     if (dataBinding) {
                         scalaCompile.source(dataBinding.outputs.files.filter { it.path.contains("/generated/") && it.path.contains("/${variant.name}/") })
-                        evictCompileOutputForSrcTask(project, scalaCompile, dataBinding, null /*置为 null，避免重复计算。*/)
+                        evictCompileOutputForSrcTask(scalaDeduplicate, project, scalaCompile, dataBinding, null /*置为 null，避免重复计算。*/)
                     }
                 }
             }
-        } else {
-            LOG.warn "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]javaCompile:null"
         }
     }
 
-    private void evictCompileOutputForSrcTask(Project project, AbstractCompile dest, @Nullable Task src, @Nullable ScalroidExtension scalroid, String... srcDirs) {
+    private void evictCompileOutputForSrcTask(ScalaDeDuplicateClassesTask deduplicate, Project project, AbstractCompile dest, @Nullable Task src, @Nullable ScalroidExtension scalroid, String... srcDirs) {
         // 无法创建针对输出的过滤器（而输入默认携带`task.exclude()`），试过所以方法（包括搜索文档）。因为`task.outputs.xxx`基本都是不可变的，意味着
         // 调用某的方法仅返回一个值，无法设置进去从而起作用。
         //PatternFilterable patternFilter = patternSetFactory.create()
@@ -739,17 +775,20 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             final allSrcMatchTask = dest.source.files.findAll { file -> parentPaths.any { file.path.startsWith(it) } }
             final allSrcMatchDirs = dest.source.files.findAll { file -> excludePaths.any { file.path.indexOf(it, projLen) > 0 } }
 
-            final pkgNamePaths = allSrcMatchTask
+            final pkgOrNamesEvicts = allSrcMatchTask
                     .collect { file -> file.path.substring(parentPathToLens.find { file.path.startsWith(it.key) }.value) }
                     .collect { final i = it.lastIndexOf('/'); final j = it.lastIndexOf('.'); i < j && j > 0 ? it.substring(0, j) : it }
-            LOG.info "$NAME_PLUGIN ---> [evictCompileOutputForSrcTask]packageAndNames:${pkgNamePaths}"
+            LOG.info "$NAME_PLUGIN ---> [evictCompileOutputForSrcTask]packageOrNamesEvicts:${pkgOrNamesEvicts}"
 
-            final pkgNameExcludes = allSrcMatchDirs
+            final pkgOrNamesExcludes = allSrcMatchDirs
                     .collect { file -> int i = -1; final path = excludePaths.find { i = file.path.indexOf(it, projLen); i > 0 }; assert i > 0; file.path.substring(i + path.length()) }
                     .collect { final i = it.lastIndexOf('/'); final j = it.lastIndexOf('.'); i < j && j > 0 ? it.substring(0, j) : it }
-            LOG.info "$NAME_PLUGIN ---> [evictCompileOutputForSrcTask]packageNameExcludes:${pkgNameExcludes}"
+            LOG.info "$NAME_PLUGIN ---> [evictCompileOutputForSrcTask]packageOrNamesExcludes:${pkgOrNamesExcludes}"
 
-            dest.outputs.files.asFileTree.each { File file ->
+            deduplicate.packageOrNamesEvicts.addAll(pkgOrNamesEvicts)
+            deduplicate.packageOrNamesExcludes.addAll(pkgOrNamesExcludes)
+
+            /*dest.outputs.files.asFileTree.each { File file ->
                 final hit = (pkgNamePaths + pkgNameExcludes).any { pkgName ->
                     //file.path.substring(destLen) == (pkgName + '.class') // 可能后面跟的不是`.class`而是`$1.class`、`$xxx.class`。
                     //file.path.substring(destLen).startsWith(pkgName) // 改写如下：
@@ -760,11 +799,11 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 }
                 if (hit) {
                     LOG.info "$NAME_PLUGIN ---> [evictCompileOutputForSrcTask] ^^^ HIT:$file"
-                    file.delete()
+                    file.delete() // TODO: 影响增量编译的问题在这，但这貌似只是影响极小的一个点。还有其它原因，还在搜寻中…
                 } else {
                     LOG.info "$NAME_PLUGIN ---> [evictCompileOutputForSrcTask] NOT HIT:$file"
                 }
-            }
+            }*/
         }
     }
 
@@ -787,11 +826,12 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         return kotlinAndroidTarget(project).compilations.getByName(variant.name) // KotlinJvmAndroidCompilation
     }
 
-    private void wireScalaTasks(Project project, ScalroidExtension scalroid, variant, TaskProvider scalaTask, TaskProvider javaTask, TaskProvider kotlinTask, boolean isLibrary, boolean isTest) {
+    private void wireScalaTasks(Project project, ScalroidExtension scalroid, variant, TaskProvider scalaTask, TaskProvider deduplicate, TaskProvider javaTask, TaskProvider kotlinTask, boolean isLibrary, boolean isTest) {
         final compilation = kotlinJvmAndroidCompilation(project, variant)
         final outputs = compilation.output.classesDirs // ConfigurableFileCollection
         //LOG.info "$NAME_PLUGIN ---> [wireScalaTasks]outputs:${outputs.class}, it.files:${outputs.files}"
-        outputs.from(scalaTask.flatMap { it.destinationDirectory })
+//        outputs.from(scalaTask.flatMap { it.destinationDirectory })
+        outputs.from(deduplicate.flatMap { it.outputDir })
         //final outputs1 = compilation.output.classesDirs
         //LOG.info "$NAME_PLUGIN ---> [wireScalaTasks]outputs1:${outputs1.class}, it.files:${outputs1.files}"
 
@@ -799,9 +839,11 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         // 如果这样写`project.files(scalaTask.get().destinationDirectory)`会导致 Task 的循环依赖。
         final javaOuts = project.files(project.provider([call: { javaTask.get().destinationDirectory.get().asFile }] as Callable))
         final scalaOuts = project.files(project.provider([call: { scalaTask.get().destinationDirectory.get().asFile }] as Callable))
+        final scalaClasses = project.files(project.provider([call: { deduplicate.get().outputDir.get().asFile }] as Callable))
         final kotlinOuts = project.files(project.provider([call: { kotlinTask.get().destinationDirectory.get().asFile }] as Callable))
         LOG.info "$NAME_PLUGIN ---> [wireScalaTasks]javaOuts:${javaOuts}, it.files:${javaOuts.files}"
         LOG.info "$NAME_PLUGIN ---> [wireScalaTasks]scalaOuts:${scalaOuts}, it.files:${scalaOuts.files}"
+        LOG.info "$NAME_PLUGIN ---> [wireScalaTasks]scalaClasses:${scalaClasses}, it.files:${scalaClasses.files}"
         LOG.info "$NAME_PLUGIN ---> [wireScalaTasks]kotlinOuts:${kotlinOuts}, it.files:${kotlinOuts.files}"
 
         // 这句的作用是便于分析出任务依赖关系（In order to properly wire up tasks），详见`Object registerPreJavacGeneratedBytecode(FileCollection)`文档。
@@ -867,7 +909,8 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         LOG.info "$NAME_PLUGIN ---> [wireScalaTasks]scalaCodeReferToKt:${scalroid.scalaCodeReferToKt.get()}, ktCodeReferToScala:${scalroid.ktCodeReferToScala.get()}"
         checkArgsProbablyWarning(scalroid)
 
-        final classpathKey = variant.registerPreJavacGeneratedBytecode(scalaOuts)
+//        final classpathKey = variant.registerPreJavacGeneratedBytecode(scalaOuts)
+        final classpathKey = variant.registerPreJavacGeneratedBytecode(scalaClasses)
         if (scalroid.scalaCodeReferToKt.get()) {
             scalaTask.configure { scala -> // ...
                 scala.classpath += variant.getCompileClasspath(classpathKey)
@@ -875,13 +918,16 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             // 抑制警告：- Gradle detected a problem with the following location: '/Users/weichou/git/bdo.cash/demo-material-3/app/build/tmp/scala-classes/githubDebug'.
             // Reason: Task ':app:mergeGithubDebugJavaResource' uses this output of task ':app:compileGithubDebugScala' without declaring an explicit or implicit dependency. This can lead to incorrect results being produced, depending on what order the tasks are executed. Please refer to https://docs.gradle.org/7.4/userguide/validation_problems.html#implicit_dependency for more details about this problem.
             final mergeJavaRes = project.tasks.findByName(genMergeJavaResourceTaskName(variant.name))
-            if (mergeJavaRes) mergeJavaRes.dependsOn scalaTask
+//            if (mergeJavaRes) mergeJavaRes.dependsOn scalaTask
+            if (mergeJavaRes) mergeJavaRes.dependsOn deduplicate
         } else {
             scalaOuts.builtBy(scalaTask)
+            scalaClasses.builtBy(deduplicate)
         }
         if (scalroid.ktCodeReferToScala.get()) {
             kotlinTask.configure { kt -> // ...
-                kt.libraries.from(scalaOuts)
+//                kt.libraries.from(scalaOuts)
+                kt.libraries.from(scalaClasses)
             }
         }
     }
@@ -914,6 +960,10 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
     }
 
     private String genScalaCompileTaskName(String srcSetNameMatchVariant) {
+        return "compileScala${srcSetNameMatchVariant.capitalize()}CrossScope"
+    }
+
+    private String genDeduplicateClassesTaskName(String srcSetNameMatchVariant) {
         return "compile${srcSetNameMatchVariant.capitalize()}Scala"
     }
 
