@@ -17,6 +17,7 @@
 package cash.bdo
 
 import org.gradle.api.DefaultTask
+import org.gradle.api.file.Directory
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileType
 import org.gradle.api.internal.file.DefaultFileTreeElement
@@ -65,6 +66,10 @@ abstract class ScalaDeDuplicateClassesTask extends DefaultTask {
 
     @TaskAction
     def execute(InputChanges inputChanges) {
+        // TODO: 实测，输入输出目录不应相同，会导致该任务始终处于`UP-TO-DATE`状态。
+        final boolean isInOutSame = isInOutTheSameDir(inputDir.get(), outputDir.get())
+        if (isInOutSame) LOG.get().warn "${NAME_PLUGIN.get()} ---> [deduplicate.execute] The `inputDir` was detected to be the same as `outputDir`, the result may be incorrect!"
+
         inputChanges.getFileChanges(inputDir).each { change ->
             switch (change.fileType) {
                 case FileType.MISSING: return
@@ -78,10 +83,11 @@ abstract class ScalaDeDuplicateClassesTask extends DefaultTask {
             final inputDirPathLength = inputDirPath.length() + (inputDirPath.endsWith('/') ? 0 : 1)
 
             final pathRelative = change.normalizedPath.substring(inputDirPathLength)
-            def targetFile = outputDir.file(pathRelative).get().asFile
-
-//            println "%%%%%%%%%%%%%%%%%%%>>> ${targetFile.path}"
-//            println "change.normalizedPath: ${change.normalizedPath}"
+            final targetFile = isInOutSame
+                    // 但这里即使`inputDir`与`outputDir`相同，也要创建新的文件。否则删不掉。
+                    ? outputDir.file(change.normalizedPath).get().asFile
+                    // 只有这样才能创建真正位于`outputDir`下的文件。否则如果像上一行那样，即使`inputDir`与`outputDir`不同，targetFile 也与`change.file`相同。
+                    : outputDir.file(pathRelative).get().asFile
 
             //noinspection GroovyFallthrough
             switch (change.changeType) {
@@ -91,7 +97,7 @@ abstract class ScalaDeDuplicateClassesTask extends DefaultTask {
                 case ChangeType.ADDED:
                 case ChangeType.MODIFIED:
                     if (isFileHitEvict(change.file, inputDirPathLength)) targetFile.delete() //.
-                    else {
+                    else if (!isInOutSame) {
                         LOG.get().info "${NAME_PLUGIN.get()} ---> [deduplicate.execute]copy to:$targetFile"
                         DefaultFileTreeElement.of(change.file, fileSystem).copyTo(targetFile)
                     }
@@ -100,13 +106,17 @@ abstract class ScalaDeDuplicateClassesTask extends DefaultTask {
         }
     }
 
+    boolean isInOutTheSameDir(Directory input, Directory output) {
+        return input.asFile.path == output.asFile.path
+    }
+
     boolean isFileHitEvict(File file, int inputDirPathLength) {
         final int destLen = inputDirPathLength
         final Set<String> excludes = packageOrNamesEvicts.get() + packageOrNamesExcludes.get()
         if (excludes.isEmpty()) {
             // androidTest, unitTest 为空较为正常。
             // 由于这个插件是我写的，如果有错，也是我的错（不是用户的错），所以…不能抛异常，最多给个警告表示有这回事即可。
-            LOG.get().warn "${NAME_PLUGIN.get()} ---> [deduplicate.isFileHitEvict] Are the parameters set correctly? `packageOrNamesEvicts` and `packageOrNamesExcludes` are both empty, and the output may be wrong!"
+            LOG.get().info "${NAME_PLUGIN.get()} ---> [deduplicate.isFileHitEvict] Are the parameters set correctly? `packageOrNamesEvicts` and `packageOrNamesExcludes` are both empty, and the output may cause duplication error!"
             //return false // 下面的`excludes.any{}`也会立即返回 false。
         }
         final hit = excludes.any { pkgName ->
