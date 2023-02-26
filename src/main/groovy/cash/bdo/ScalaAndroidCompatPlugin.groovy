@@ -26,7 +26,9 @@ import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.type.ArtifactTypeDefinition
 import org.gradle.api.file.FileCollection
 import org.gradle.api.file.SourceDirectorySet
+import org.gradle.api.internal.tasks.DefaultScalaSourceDirectorySet
 import org.gradle.api.internal.tasks.DefaultScalaSourceSet
+import org.gradle.api.internal.tasks.TaskDependencyFactory
 import org.gradle.api.logging.Logger
 import org.gradle.api.logging.Logging
 import org.gradle.api.model.ObjectFactory
@@ -136,13 +138,15 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         //LOG.info ''
     }
     private final ObjectFactory factory
+    private final TaskDependencyFactory dependencyFactory
     //private final SoftwareComponentFactory softCptFactory
     //private final JvmPluginServices jvmServices
     //private final Factory<PatternSet> patternSetFactory
 
     @Inject
-    ScalaAndroidCompatPlugin(ObjectFactory objectFactory) {
+    ScalaAndroidCompatPlugin(ObjectFactory objectFactory, TaskDependencyFactory dependencyFactory) {
         this.factory = objectFactory
+        this.dependencyFactory = dependencyFactory
         //this.softCptFactory = softCptFactory
         //this.jvmServices = jvmServices
         //this.patternSetFactory = patternSetFactory
@@ -398,16 +402,34 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         //org.gradle.internal.extensibility.DefaultConvention
 
         // 对于不同的`sourceSet`，第一次肯定没有值。
-        if (sourceSet.extensions.findByName("scala")) return false
+        if (sourceSet.extensions.findByName('scala')) return false
 
         final displayName = sourceSet.displayName //(String) InvokerHelper.invokeMethod(sourceSet, "getDisplayName", null)
-        //Convention sourceSetConvention = sourceSet.convention //(Convention) InvokerHelper.getProperty(sourceSet, "convention")
-        DefaultScalaSourceSet scalaSourceSet = new DefaultScalaSourceSet(displayName, factory)
-        final SourceDirectorySet scalaDirSet = scalaSourceSet.scala
-        // 这句`约定（convention）`的作用是添加：
-        // sourceSets { main { scala.srcDirs += ['src/main/java'] } ...}
-        sourceSet.convention.plugins.put("scala", scalaSourceSet)
-        sourceSet.extensions.add(ScalaSourceDirectorySet, "scala", scalaDirSet)
+
+        SourceDirectorySet scalaDirSet
+        final gradleVersion = project.gradle.gradleVersion
+        final int verMajor = Integer.valueOf(gradleVersion.substring(0, gradleVersion.indexOf('.')))
+
+        // TODO: 俩版本不能通用，会报错，只能在 publish 某版本时手动注释掉另一 case。
+        if (verMajor >= 8) {
+            final scalaSourceSet = factory.newInstance(DefaultScalaSourceSet, displayName, factory)
+            sourceSet.convention.plugins.put('scala', scalaSourceSet)
+            scalaDirSet = scalaSourceSet.scala
+
+            // TODO: 如果上面的不能用了，就启用下面的。
+//            final ScalaSourceDirectorySet scala = factory.newInstance(DefaultScalaSourceDirectorySet, factory.sourceDirectorySet('scala', "${displayName} Scala source"), dependencyFactory)
+//            scala.filter.include('**/*.java', '**/*.scala')
+//            scalaDirSet = scala
+        } else {
+            //Convention sourceSetConvention = sourceSet.convention //(Convention) InvokerHelper.getProperty(sourceSet, "convention")
+//            final scalaSourceSet = new DefaultScalaSourceSet(displayName, factory)
+            final scalaSourceSet = factory.newInstance(DefaultScalaSourceSet, displayName, factory)
+            // 这句`约定（convention）`的作用是添加：
+            // sourceSets { main { scala.srcDirs += ['src/main/java'] } ...}
+            sourceSet.convention.plugins.put('scala', scalaSourceSet)
+            scalaDirSet = scalaSourceSet.scala
+        }
+        sourceSet.extensions.add(ScalaSourceDirectorySet, 'scala', scalaDirSet)
         scalaDirSet.srcDir(project.file("src/${sourceSet.name}/scala"))
 
         // Explicitly capture only a FileCollection in the lambda below for compatibility with configuration-cache.
