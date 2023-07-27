@@ -702,6 +702,9 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 scalaCompile.targetCompatibility = javaCompile.targetCompatibility
                 // Unexpected javac output: 警告: [options] 未与 -source 8 一起设置引导类路径
                 scalaCompile.options.bootstrapClasspath = javaCompile.options.bootstrapClasspath
+                // Unexpected javac output: 警告: [options] 未与 -source 11 一起设置系统模块路径
+                // TODO: 暂找不到原因，无法解决。
+
                 scalaCompile.options.encoding = javaCompile.options.encoding
                 // scalaCompile.scalaCompileOptions 可以在`build.gradle`脚本中配置
                 //scalaCompile.scalaCompileOptions.encoding = scalaCompile.options.encoding

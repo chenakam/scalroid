@@ -14,9 +14,9 @@ Now, this plugin is well developed and ready for official use.
 
 ## Supported versions
 
-| Gradle          | Android Plugin    | Kotlin Plugin            | Scala (this plugin compiles) |
-|-----------------|-------------------|--------------------------|------------------------------|
-| `7.5` ~ `8.0.1` | `7.4.0` and newer | `1.7.20` ~ `1.8.20-Beta` | `2.10.x` ~ `3.x`             |
+| Gradle            | Android Plugin    | Kotlin Plugin        | Scala (this plugin compiles) |
+|-------------------|-------------------|----------------------|------------------------------|
+| `7.6.2` ~ `8.2.1` | `7.4.0` ~ `8.0.2` | `1.7.20` ~ `1.9.0`   | `2.10.x` ~ `3.x`             |
 
 * The Scala version fully supports the `ScalaPlugin` of gradle, see official documentation:
   https://docs.gradle.org/current/userguide/scala_plugin.html#sec:configure_zinc_compiler  
@@ -41,8 +41,9 @@ Now, this plugin is well developed and ready for official use.
           public void remove(Class<?> type) {}
       }
       ```
-    - Since the Gradle have bugs in `Scala incremental compilation` and did not fixed yet in version **7.x**: [#23202](https://github.com/gradle/gradle/issues/23202).
-      Therefore, Gradle **v8.0.1** is recommended, and Scala incremental compilation works well.
+    - Since the Gradle have bugs in `Scala incremental compilation` _~~and did not fixed in version **v7.x**: [#23202](https://github.com/gradle/gradle/issues/23202)~~_
+      (but has been fixed in and after **v7.6.2**).
+      Nevertheless, Gradle **v8.0.1 ~ v8.2.1** is recommended, and scala incremental compilation works well.
 
 ## Usage
 
@@ -78,12 +79,12 @@ git clone git@github.com:chenakam/scalroid.git buildSrc
 ```groovy
 // ...
 plugins {
-    id 'com.android.application' version '7.4.1' apply false
-    id 'com.android.library' version '7.4.1' apply false
-    id 'org.jetbrains.kotlin.android' version '1.8.0' apply false
+    id 'com.android.application' version '8.0.2' apply false
+    id 'com.android.library' version '8.0.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.0' apply false
 
     // TODO: if you have not clone the dir `buildSrc/`, you need to uncomment the `version` filed.
-    id 'cash.bdo.scalroid' /*version '[1.3,)'*/ apply false
+    id 'cash.bdo.scalroid' /*version '[1.5-gradle8,)'*/ apply false
 }
 ```
 
@@ -105,24 +106,24 @@ plugins {
 
 android {
     scalroid {
-//        scala.zincVersion.set('1.6.1')
+        scala.zincVersion.set('1.8.0')
 //        scalaCodeReferToKt = false
 //        ktCodeReferToScala = true
-//        javaDirsExcludes = ['src/main/kotlin']
+//        javaDirsExcludes = ['src/main/kotlin', 'src/aaa/xxx']
     }
     // ...
 }
 
 dependencies {
-    implementation "androidx.core:core-ktx:1.8.0"
-    implementation 'androidx.appcompat:appcompat:1.4.2'
+    implementation "androidx.core:core-ktx:1.9.0"
+    implementation 'androidx.appcompat:appcompat:1.5.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     // ...
 
     // `scala-library` must be set. Scala 2 or Scala 3
 
     // Scala 2
-    implementation "org.scala-lang:scala-library:2.12.17"
+    implementation "org.scala-lang:scala-library:2.12.18"
     // Scala 3
 //    implementation 'org.scala-lang:scala3-library_3:3.2.0-RC2'
 }
