@@ -69,6 +69,8 @@ interface ScalroidExtension {
     Property<Boolean> getScalaCodeReferToKt()
     /** 默认值 true。其它同上。看 scala/kotlin 哪个注释的代价小。*/
     Property<Boolean> getKtCodeReferToScala()
+    /** 是否将`R.jar`展开（Expand），这样会将其纳入到`External Libraries`下管理。*/
+    Property<Boolean> getSetAppRJarAsLib()
 
     ListProperty<String> getJavaDirsExcludes()
 
@@ -181,6 +183,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             // 设置会优先返回（写在`build.gradle`里的）
             extension.scalaCodeReferToKt = false
             extension.ktCodeReferToScala = true
+            extension.setAppRJarAsLib = true
             extension.javaDirsExcludes = factory.listProperty(String)
             extension.message = ScalroidExtension.DEF_MESSAGE
             extension.greeter = ScalroidExtension.DEF_GREETER
@@ -239,7 +242,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 final sub = path.substring(0, path.length() - it.path.length())
                 return sub.endsWith('/scala/')
             }
-            if (sourceSet.java.srcDirs) LOG.info "${sourceSet.java.srcDirs} / ${sourceSet.java.srcDirs.class}"
+            if (sourceSet.java.srcDirs) LOG.info "$NAME_PLUGIN ---> ${sourceSet.java.srcDirs} / ${sourceSet.java.srcDirs.class}"
             if (sourceSet.kotlin) {
                 final ktSrc = sourceSet.kotlin.srcDirs // com.google.common.collect.RegularImmutableSet<File>
                 // 同理：有了这句，kt 引用 scala 就不标红了。
@@ -276,6 +279,17 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
         // 要保证`main`在`project.afterEvaluate{}`配置完成。否则实测会报错。
         sourceSetConfig.call(mainSourceSet)
 
+        // TODO: 为了在`build.gradle`里这样写（它不能写在`project.afterEvaluate{}`里，会报错）。
+        //  dependencies {
+        //    appRJarXxx fileTree(include: ['**/R.jar'], dir: 'build/intermediates/compile_and_runtime_not_namespaced_r_class_jar')
+        //  }
+        // 但实测无用。只有`compileOnly`等一些预置的（configurations）才能被放进`External Libraries`下管理。
+        /*project.configurations.create('appRJarXxx', { Configuration conf ->
+            conf.canBeResolved = true
+            conf.canBeConsumed = false
+            conf.visible = false
+            conf.description = 'Fix issue of `R.id.xxx` marked red in `Scala` code.'
+        })*/
         project.afterEvaluate {
             LOG.info ''
             ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// ////////// //////////
@@ -319,8 +333,8 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 if (srcSetNameMatchVariant) {
                     variantSourceSetMap.put(srcSetNameMatchVariant, sourceSet)
 
-                    if (srcSetNameMatchVariant != main && srcSetNameMatchVariant != test) {
-                        //final variant = variantsMap[srcSetNameMatchVariant] // 没有名为`main`的
+                    // 此处不处理名字直接为以下的（但有名字如`xxxAndroidTest`的）
+                    if (![main, test, androidTest, unitTest].any { it == srcSetNameMatchVariant }) {
                         final isTest = maybeIsTest(srcSetNameMatchVariant)
                         final isAndroidTest = [androidTest, androidTest.capitalize()].any { srcSetNameMatchVariant.contains(it) }
                         //ScalaRuntime scalaRuntime = project.extensions.getByName(SCALA_RUNTIME_EXTENSION_NAME)
@@ -422,8 +436,8 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
 //            scalaDirSet = scala
         } else {
             //Convention sourceSetConvention = sourceSet.convention //(Convention) InvokerHelper.getProperty(sourceSet, "convention")
-//            final scalaSourceSet = new DefaultScalaSourceSet(displayName, factory)
-            final scalaSourceSet = factory.newInstance(DefaultScalaSourceSet, displayName, factory)
+            final scalaSourceSet = new DefaultScalaSourceSet(displayName, factory) {}
+//            final scalaSourceSet = factory.newInstance(DefaultScalaSourceSet, displayName, factory)
             // 这句`约定（convention）`的作用是添加：
             // sourceSets { main { scala.srcDirs += ['src/main/java'] } ...}
             sourceSet.convention.plugins.put('scala', scalaSourceSet)
@@ -440,28 +454,33 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
 
     private void configureScalaCompile(Project project, sourceSet, mainSourceSet, androidTestSourceSet, testSourceSet, androidExtension, String src$vaName, boolean isLibrary, boolean isTest, boolean isAndroidTest) {
         assert sourceSet != mainSourceSet && sourceSet != androidTestSourceSet && sourceSet != testSourceSet && mainSourceSet != androidTestSourceSet && mainSourceSet != testSourceSet && androidTestSourceSet != testSourceSet
-
-        final Configuration classpathBySourceSetImpl = project.configurations.getByName(sourceSet.implementationConfigurationName)
-        final Configuration mainClasspathImpl = project.configurations.getByName(mainSourceSet.implementationConfigurationName)
         //printConfiguration(project, sourceSet.implementationConfigurationName)
 
-        // 打印查看，各 variant 的 implementation 都包含了 main 的（但是 {variant}AndroidTest 没有，所以还是要加上），且包含 api, compileOnly 等：
-        // xxxConfig.hierarchy.each { Configuration it ->
-        //     println " -- ${it}"
-        //     it.attributes.each { attrs -> } …
-        // 实测：有时不在`config.extendsFrom()`的第一层不行，所以得展开（`.getHierarchy()`）。
-        def classpathConfigs = classpathBySourceSetImpl.hierarchy.toList() + (mainClasspathImpl ? mainClasspathImpl.hierarchy.toList() : [])
+        // 这一句通常如下（即在`main`里面），因此必须要加入`classpathConfigs`中（更多信息参见`ScalaRuntime.inferScalaClasspath()`）：
+        // implementation "org.scala-lang:scala-library:$scala2.Version"
+        final Configuration mainClasspath = project.configurations.getByName(mainSourceSet.implementationConfigurationName)
+        final Configuration mainCompileOnly = project.configurations.getByName(mainSourceSet.compileOnlyConfigurationName)
+        final Configuration mainRuntimeOnly = project.configurations.getByName(mainSourceSet.runtimeOnlyConfigurationName)
+        def classpathConfigs = mainClasspath.hierarchy + mainCompileOnly.hierarchy + mainRuntimeOnly.hierarchy
+
+        final Configuration classpathByImplement = project.configurations.getByName(sourceSet.implementationConfigurationName)
+        final Configuration compileOnlySourceSet = project.configurations.getByName(sourceSet.compileOnlyConfigurationName)
+        final Configuration runtimeOnlySourceSet = project.configurations.getByName(sourceSet.runtimeOnlyConfigurationName)
+        classpathConfigs += classpathByImplement.hierarchy + compileOnlySourceSet.hierarchy + runtimeOnlySourceSet.hierarchy
         if (isTest) {
+            final Configuration implementationTest = project.configurations.getByName(testSourceSet.implementationConfigurationName)
+            final Configuration compileOnlyTestSet = project.configurations.getByName(testSourceSet.compileOnlyConfigurationName)
+            final Configuration runtimeOnlyTestSet = project.configurations.getByName(testSourceSet.runtimeOnlyConfigurationName)
+            classpathConfigs += implementationTest.hierarchy + compileOnlyTestSet.hierarchy + runtimeOnlyTestSet.hierarchy
             if (isAndroidTest) {
-                final Configuration androidTestClasspathImpl = project.configurations.getByName(androidTestSourceSet.implementationConfigurationName)
-                if (androidTestClasspathImpl) classpathConfigs += androidTestClasspathImpl.hierarchy.toList()
-            } else {
-                final Configuration testClasspathSrcSetImpl = project.configurations.getByName(testSourceSet.implementationConfigurationName)
-                if (testClasspathSrcSetImpl) classpathConfigs += testClasspathSrcSetImpl.hierarchy.toList()
+                final Configuration implementationAndroidTest = project.configurations.getByName(androidTestSourceSet.implementationConfigurationName)
+                final Configuration compileOnlyAndroidTestSet = project.configurations.getByName(androidTestSourceSet.compileOnlyConfigurationName)
+                final Configuration runtimeOnlyAndroidTestSet = project.configurations.getByName(androidTestSourceSet.runtimeOnlyConfigurationName)
+                classpathConfigs += implementationAndroidTest.hierarchy + compileOnlyAndroidTestSet.hierarchy + runtimeOnlyAndroidTestSet.hierarchy
             }
         }
-        classpathConfigs.removeIf { !it || it.dependencies.isEmpty() }
-        classpathConfigs = classpathConfigs.toSet()
+        //classpathConfigs.removeIf { !it || it.dependencies.isEmpty() } // 在某些情况下，有可能不是`.isEmpty()`，如：`testImplementation`。所以不用去掉。
+//        classpathConfigs = classpathConfigs.toSet()
         LOG.info "$NAME_PLUGIN ---> [configureScalaCompile]sourceSet.name:${sourceSet.name}, classpathConfigs.size:${classpathConfigs.size()}"
 
         // TODO: 注释掉的原因见下面`scalaCompile.analysisMappingFile`的注释
@@ -692,7 +711,7 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
             project.tasks.withType(ScalaCompile).getByName(scalaTaskName) { ScalaCompile scalaCompile ->
                 LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]javaCompile.destinationDirectory:${javaCompile.destinationDirectory.orNull}"
 
-                final scalaDeduplicate = project.tasks.withType(ScalaDeDuplicateClassesTask).findByName(scalaDeduplicateName)
+                final scalaDeduplicate = project.tasks.withType(ScalaDeDuplicateClassesTask).getByName(scalaDeduplicateName)
                 //javaCompile.dependsOn scalaCompile
                 javaCompile.dependsOn scalaDeduplicate
 
@@ -702,19 +721,27 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                 scalaCompile.targetCompatibility = javaCompile.targetCompatibility
                 // Unexpected javac output: 警告: [options] 未与 -source 8 一起设置引导类路径
                 scalaCompile.options.bootstrapClasspath = javaCompile.options.bootstrapClasspath
-                // Unexpected javac output: 警告: [options] 未与 -source 11 一起设置系统模块路径
-                // TODO: 暂找不到原因，无法解决。
-
+                // TODO: Unexpected javac output: 警告: [options] 未与 -source 11 一起设置系统模块路径
+                //  原因是`app/build.gradle`的以下设置不正确，应与当前使用的`jdk`版本保持一致。例如：
+                //  `org.gradle.java.home=/Library/Java/JavaVirtualMachines/jdk-17-aarch64.jdk/Contents/Home`
+                /*compileOptions {
+                    sourceCompatibility JavaVersion.VERSION_17
+                    targetCompatibility JavaVersion.VERSION_17
+                }
+                kotlinOptions { jvmTarget = '17' } // 有了下面的，这行设置可以不要。
+                kotlin {
+                    jvmToolchain(17)
+                }*/
+                scalaCompile.options.sourcepath = javaCompile.options.sourcepath
+                scalaCompile.options.annotationProcessorPath = javaCompile.options.annotationProcessorPath
                 scalaCompile.options.encoding = javaCompile.options.encoding
+
                 // scalaCompile.scalaCompileOptions 可以在`build.gradle`脚本中配置
                 //scalaCompile.scalaCompileOptions.encoding = scalaCompile.options.encoding
 
-                final kotlinCompile = project.tasks.findByName(kotlinTaskName)
-                if (kotlinCompile) {
+                project.tasks.getByName(kotlinTaskName) { kotlinCompile ->
                     //LOG.info "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]kotlinCompile:${kotlinCompile} / ${kotlinCompile.class}" // org.jetbrains.kotlin.gradle.tasks.KotlinCompile
                     wireScalaTasks(project, scalroid, variant, project.tasks.named(scalaTaskName), project.tasks.named(scalaDeduplicateName), project.tasks.named(javaTaskName), project.tasks.named(kotlinTaskName), isLibrary, isTest)
-                } else {
-                    LOG.warn "$NAME_PLUGIN ---> [linkScalaCompileDependsOn]kotlinCompile:null"
                 }
                 // `:app:compile{variant}AndroidTestJavaWithJavac`本来就依赖于`:app:compile{variant}JavaWithJavac`，而
                 // `:app:compile{variant}JavaWithJavac`依赖于`:app:compile{variant}Scala`，所以就不用在这里手动加了（加也无妨）。
@@ -738,14 +765,22 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
                     final rFile = project.tasks.findByName(rFileTaskName)
                     final dataBinding = project.tasks.findByName(dataBindingGenBaseTaskName)
                     if (processRes) {
+                        final files = project.files(processRes.outputs.files.find { it.path.endsWith("${variant.name}/R.jar") })
                         scalaCompile.dependsOn processRes
-                        scalaCompile.classpath += project.files(processRes.outputs.files.find { it.path.endsWith("${variant.name}/R.jar") })
+                        scalaCompile.classpath += files
+
+                        if (scalroid.setAppRJarAsLib.get()) {
+                            assert !isLibrary // `processRes`存在就说明是主`app`，不是 lib。
+                            // 等同于`build.gradle`中的：
+                            // ${variant.name}CompileOnly files('build/intermediates/compile_and_runtime_not_namespaced_r_class_jar/${variant.name}/R.jar')
+                            project.dependencies.add("${variant.name}CompileOnly", files)
+                        }
                     } else if (rFile) {
                         scalaCompile.dependsOn rFile
                         scalaCompile.classpath += project.files(rFile.outputs.files.find { it.path.endsWith("${variant.name}/R.jar") })
                     }
                     // 把生成的`BuildConfig`加入依赖。同理，还可以加入别的。
-                    project.tasks.getByName(buildConfigTaskName) { Task buildConfig -> // ...
+                    project.tasks.named(buildConfigTaskName) { Task buildConfig -> // ...
                         scalaCompile.source(buildConfig)
                         evictCompileOutputForSrcTask(scalaDeduplicate, project, scalaCompile, buildConfig, scalroid, "src/${main}/java/", "src/${main}/kotlin/", "src/${sourceSet.name}/java/", "src/${sourceSet.name}/kotlin/")
                     }

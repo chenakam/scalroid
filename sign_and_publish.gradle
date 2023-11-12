@@ -6,7 +6,7 @@
 apply plugin: 'signing'
 
 group = 'cash.bdo.dev'
-version = '1.4.2-gradle7-SNAPSHOT' // latest: '1.5-gradle8'
+version = '1.4.4-gradle7-SNAPSHOT' // latest: '1.6-gradle8'
 
 ext.isReleaseVersion = !version.endsWith('SNAPSHOT')
 
