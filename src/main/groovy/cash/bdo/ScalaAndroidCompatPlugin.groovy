@@ -411,14 +411,14 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
 
     // [evaluated] 表示是否在`project.afterEvaluate{}`中执行。
     private boolean resolveScalaSrcDirsToAndroidSourceSetsClosure(Project project, sourceSet, boolean evaluated) {
-        LOG.info "$NAME_PLUGIN ---> [resolveScalaSrcDirsToAndroidSourceSetsClosure]sourceSet.name:${sourceSet.name}, displayName:${sourceSet.displayName}"
+        LOG.info "$NAME_PLUGIN ---> [resolveScalaSrcDirsToAndroidSourceSetsClosure]sourceSet.name:${sourceSet.name}"
         LOG.info "$NAME_PLUGIN ---> [resolveScalaSrcDirsToAndroidSourceSetsClosure]sourceSet.extensions:${sourceSet.extensions}"
         //org.gradle.internal.extensibility.DefaultConvention
 
         // 对于不同的`sourceSet`，第一次肯定没有值。
         if (sourceSet.extensions.findByName('scala')) return false
 
-        final displayName = sourceSet.displayName //(String) InvokerHelper.invokeMethod(sourceSet, "getDisplayName", null)
+        final sourceSetName = sourceSet.name
 
         SourceDirectorySet scalaDirSet
         final gradleVersion = project.gradle.gradleVersion
@@ -426,18 +426,18 @@ class ScalaAndroidCompatPlugin implements Plugin<Project> {
 
         // TODO: 俩版本不能通用，会报错，只能在 publish 某版本时手动注释掉另一 case。
         if (verMajor >= 8) {
-            final scalaSourceSet = factory.newInstance(DefaultScalaSourceSet, displayName, factory)
+            final scalaSourceSet = factory.newInstance(DefaultScalaSourceSet, sourceSetName, factory)
             sourceSet.convention.plugins.put('scala', scalaSourceSet)
             scalaDirSet = scalaSourceSet.scala
 
             // TODO: 如果上面的不能用了，就启用下面的。
-//            final ScalaSourceDirectorySet scala = factory.newInstance(DefaultScalaSourceDirectorySet, factory.sourceDirectorySet('scala', "${displayName} Scala source"), dependencyFactory)
+//            final ScalaSourceDirectorySet scala = factory.newInstance(DefaultScalaSourceDirectorySet, factory.sourceDirectorySet('scala', "${sourceSetName} Scala source"), dependencyFactory)
 //            scala.filter.include('**/*.java', '**/*.scala')
 //            scalaDirSet = scala
         } else {
             //Convention sourceSetConvention = sourceSet.convention //(Convention) InvokerHelper.getProperty(sourceSet, "convention")
-            final scalaSourceSet = new DefaultScalaSourceSet(displayName, factory) {}
-//            final scalaSourceSet = factory.newInstance(DefaultScalaSourceSet, displayName, factory)
+            final scalaSourceSet = new DefaultScalaSourceSet(sourceSetName, factory) {}
+//            final scalaSourceSet = factory.newInstance(DefaultScalaSourceSet, sourceSetName, factory)
             // 这句`约定（convention）`的作用是添加：
             // sourceSets { main { scala.srcDirs += ['src/main/java'] } ...}
             sourceSet.convention.plugins.put('scala', scalaSourceSet)

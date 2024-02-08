@@ -18,7 +18,7 @@ Now, this plugin is well developed and ready for official use.
 
 | Gradle          | Android Plugin    | Kotlin Plugin       | Scala (this plugin compiles) |
 |-----------------|-------------------|---------------------|------------------------------|
-| `7.6.2` ~ `8.4` | `7.4.0` ~ `8.1.3` | `1.7.20` ~ `1.9.20` | `2.10.x` ~ `3.x`             |
+| `7.6.2` ~ `8.5` | `7.4.0` ~ `8.2.2` | `1.7.20` ~ `1.9.22` | `2.10.x` ~ `3.x`             |
 
 * The Scala version fully supports the `ScalaPlugin` of gradle, see official documentation:
   https://docs.gradle.org/current/userguide/scala_plugin.html#sec:configure_zinc_compiler  
@@ -45,7 +45,7 @@ Now, this plugin is well developed and ready for official use.
       ```
     - Since the Gradle have bugs in `Scala incremental compilation` _~~and did not fixed in version **v7.x**: [#23202](https://github.com/gradle/gradle/issues/23202)~~_
       (but has been fixed in and after **v7.6.2**).
-      Nevertheless, Gradle **v8.0.1 ~ v8.4** is recommended, and scala incremental compilation works well.
+      Nevertheless, Gradle **v8.0.1 ~ v8.5** is recommended, and scala incremental compilation works well.
 
 ## Usage
 
@@ -81,9 +81,9 @@ git clone git@github.com:chenakam/scalroid.git buildSrc
 ```groovy
 // ...
 plugins {
-    id 'com.android.application' version '8.1.3' apply false
-    id 'com.android.library' version '8.1.3' apply false
-    id 'org.jetbrains.kotlin.android' version '1.9.20' apply false
+    id 'com.android.application' version '8.2.2' apply false
+    id 'com.android.library' version '8.2.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
 
     // TODO: if you have not clone the dir `buildSrc/`, you need to uncomment the `version` filed.
     id 'cash.bdo.scalroid' /*version '[1.6-gradle8,)'*/ apply false
@@ -108,7 +108,7 @@ plugins {
 
 android {
     scalroid {
-        scala.zincVersion = '1.8.0'
+        scala.zincVersion = '1.8.1'
 //        scalaCodeReferToKt = false // Take looks below
 //        ktCodeReferToScala = true
         // Whether to expand `R.jar`, so as to fix the problem of `R.id.xxx` marked red in Scala code.
